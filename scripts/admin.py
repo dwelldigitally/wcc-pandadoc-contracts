@@ -66,13 +66,42 @@ AUDIT_HEADERS = [
 
 @st.cache_resource(ttl=300)
 def get_gspread_client():
-    """Return an authorized gspread client using the service account."""
-    creds_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
-    if not creds_json:
-        st.error("GOOGLE_SERVICE_ACCOUNT_JSON environment variable is not set.")
+    """Return an authorized gspread client using the service account.
+
+    Supports two formats:
+    1. GOOGLE_SERVICE_ACCOUNT_JSON env var (JSON string)
+    2. Streamlit secrets TOML section [GOOGLE_SERVICE_ACCOUNT] (dict)
+    """
+    creds_dict = None
+
+    # Try Streamlit secrets TOML section first
+    if hasattr(st, "secrets"):
+        try:
+            sa = st.secrets.get("GOOGLE_SERVICE_ACCOUNT")
+            if sa:
+                creds_dict = dict(sa)
+        except Exception:
+            pass
+
+        # Try JSON string in secrets
+        if creds_dict is None:
+            try:
+                creds_json = st.secrets.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+                if creds_json:
+                    creds_dict = json.loads(creds_json)
+            except Exception:
+                pass
+
+    # Fall back to env var
+    if creds_dict is None:
+        creds_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+        if creds_json:
+            creds_dict = json.loads(creds_json)
+
+    if not creds_dict:
+        st.error("Service account credentials not found. Set GOOGLE_SERVICE_ACCOUNT in Streamlit secrets or GOOGLE_SERVICE_ACCOUNT_JSON env var.")
         st.stop()
 
-    creds_dict = json.loads(creds_json)
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
@@ -83,9 +112,14 @@ def get_gspread_client():
 
 def open_spreadsheet():
     """Open the target spreadsheet by ID."""
-    sheet_id = os.environ.get("GOOGLE_SHEETS_ID", "")
+    sheet_id = ""
+    # Try Streamlit secrets first, then env var
+    if hasattr(st, "secrets"):
+        sheet_id = st.secrets.get("GOOGLE_SHEETS_ID", "")
     if not sheet_id:
-        st.error("GOOGLE_SHEETS_ID environment variable is not set.")
+        sheet_id = os.environ.get("GOOGLE_SHEETS_ID", "")
+    if not sheet_id:
+        st.error("GOOGLE_SHEETS_ID not found in secrets or environment.")
         st.stop()
 
     client = get_gspread_client()
@@ -261,9 +295,13 @@ def check_auth():
     st.title("WCC Admin Panel — Login")
     password = st.text_input("Password", type="password", key="login_pw")
     if st.button("Login"):
-        expected = os.environ.get("ADMIN_PASSWORD", "")
+        expected = ""
+        if hasattr(st, "secrets"):
+            expected = st.secrets.get("ADMIN_PASSWORD", "")
         if not expected:
-            st.error("ADMIN_PASSWORD environment variable is not set.")
+            expected = os.environ.get("ADMIN_PASSWORD", "")
+        if not expected:
+            st.error("ADMIN_PASSWORD not found in secrets or environment.")
             return False
         if password == expected:
             st.session_state["authenticated"] = True
