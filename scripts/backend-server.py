@@ -462,12 +462,34 @@ class RequestHandler(BaseHTTPRequestHandler):
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=180,
             )
 
             if result.returncode != 0:
                 error_detail = result.stderr.strip() or result.stdout.strip()
                 print(f"Contract generation failed for deal {deal_id}: {error_detail}")
+
+                # Try to clean up orphaned PandaDoc document
+                orphan_doc_id = ""
+                for line in (result.stdout or "").split("\n"):
+                    if "Document ID:" in line:
+                        orphan_doc_id = line.split("Document ID:")[-1].strip()
+                        break
+                if orphan_doc_id:
+                    try:
+                        import urllib.request
+                        pandadoc_key = os.environ.get("PANDADOC_API_KEY", "")
+                        if pandadoc_key:
+                            del_req = urllib.request.Request(
+                                f"https://api.pandadoc.com/public/v1/documents/{orphan_doc_id}",
+                                method="DELETE",
+                            )
+                            del_req.add_header("Authorization", f"API-Key {pandadoc_key}")
+                            urllib.request.urlopen(del_req, timeout=10)
+                            print(f"Cleaned up orphaned document: {orphan_doc_id}")
+                    except Exception as cleanup_err:
+                        print(f"Could not clean up orphaned document {orphan_doc_id}: {cleanup_err}")
+
                 self.send_json({"error": "Contract generation failed. Check server logs."}, 500)
                 return
 
@@ -530,6 +552,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"Warning: Could not write contract log: {e}")
 
+            has_outline = "Outline added" in output
+
             self.send_json({
                 "documentId": doc_id,
                 "documentUrl": doc_url,
@@ -538,6 +562,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 "feeTier": fee_tier,
                 "total": total,
                 "feeCount": fee_count,
+                "hasOutline": has_outline,
             })
             return
 

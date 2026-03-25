@@ -683,10 +683,10 @@ def load_outline_map():
     return mapping
 
 
-def download_outline_from_drive(file_id, api_key):
+def download_outline_from_drive(file_id):
     """Download a program outline PDF from Google Drive.
 
-    Uses https://www.googleapis.com/drive/v3/files/{fileId}?alt=media&key={api_key}.
+    Uses the public export URL for link-shared files (no API key needed).
     Caches downloaded files in /tmp/outlines/{file_id}.pdf to avoid re-downloading.
     Returns the local file path on success, or None on failure.
     """
@@ -710,7 +710,7 @@ def download_outline_from_drive(file_id, api_key):
     if cached_path.exists():
         return cached_path
 
-    url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={api_key}"
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
     req = urllib.request.Request(url)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -723,7 +723,7 @@ def download_outline_from_drive(file_id, api_key):
         return None
 
 
-def get_outline_path(outline_map, program_name, api_key):
+def get_outline_path(outline_map, program_name):
     """Look up and download the PDF outline for a program from Google Drive.
 
     Returns the local cached file path, or None if unavailable.
@@ -736,7 +736,7 @@ def get_outline_path(outline_map, program_name, api_key):
     if not file_id:
         return None
 
-    return download_outline_from_drive(file_id, api_key)
+    return download_outline_from_drive(file_id)
 
 
 def create_from_signing_template(doc_name, advisor, student_email, student_first, student_last):
@@ -830,6 +830,49 @@ def link_to_hubspot(doc_id, deal_id):
 
 
 # ---------------------------------------------------------------------------
+# Template validation
+# ---------------------------------------------------------------------------
+
+def validate_template(template_path):
+    """Validate the DOCX template has expected table structure."""
+    doc = Document(str(template_path))
+    tables = doc.tables
+
+    # Check minimum table count
+    if len(tables) < 6:
+        print(f"WARNING: Template has only {len(tables)} tables (expected 6+)")
+        return False
+
+    # Check for PROGRAM COSTS table
+    has_costs = False
+    for t in tables:
+        try:
+            text = t.rows[0].cells[0].text.strip().upper()
+            if "PROGRAM COSTS" in text or "COST" in text:
+                has_costs = True
+                break
+        except (IndexError, AttributeError):
+            continue
+
+    if not has_costs:
+        print("WARNING: No 'PROGRAM COSTS' table found in template. DOCX split will not work.")
+        return False
+
+    # Check for Student Information table
+    has_student = False
+    try:
+        if "STUDENT" in tables[0].rows[0].cells[0].text.strip().upper():
+            has_student = True
+    except (IndexError, AttributeError):
+        pass
+
+    if not has_student:
+        print("WARNING: Table 0 does not appear to be Student Information.")
+
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -848,6 +891,12 @@ def main():
     print("=" * 50)
     print("WCC Contract Generator v2")
     print("=" * 50)
+
+    # Validate template structure
+    if not TEMPLATE_PATH.exists():
+        print(f"ERROR: Template not found: {TEMPLATE_PATH}")
+        sys.exit(1)
+    validate_template(TEMPLATE_PATH)
 
     # Step 1: Load program/fee data
     print("\n1. Loading program data...")
@@ -959,7 +1008,7 @@ def main():
     print(f"   Advisor: {advisor.get('firstName', '')} {advisor.get('lastName', '')}")
 
     outline_map = load_outline_map()
-    outline_path = get_outline_path(outline_map, program_name, GOOGLE_API_KEY)
+    outline_path = get_outline_path(outline_map, program_name)
 
     doc_name = f"{contact.get('firstname', '')} {contact.get('lastname', '')} - {program_name} Enrollment Contract"
 
