@@ -1,0 +1,511 @@
+"""
+WCC Contract Generator — Backend API Server (v2)
+
+Serves endpoints for the HubSpot CRM card:
+  GET  /program-data   — Full contract preview data (contact, program, intakes, fees)
+  POST /generate       — Generate contract for a deal
+  POST /reload         — Hot-reload data from Google Sheets
+  GET  /health         — Health check
+
+Deploy to: Railway, Render, Fly.io, or any Python host.
+
+Usage:
+  python backend-server.py
+  # Runs on port 3000 (or PORT env var)
+"""
+
+import json
+import csv
+import os
+import sys
+import re
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
+from pathlib import Path
+from datetime import datetime, timezone, timedelta
+
+# Pacific Daylight Time (UTC-7) — BC is in PDT most of the year
+PST = timezone(timedelta(hours=-7))
+
+SCRIPT_DIR = Path(__file__).parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from fee_matching import match_fees, resolve_fee_amounts
+
+DATA_DIR = SCRIPT_DIR.parent / "data"
+OUTLINE_DIR = SCRIPT_DIR.parent / "pdf"
+
+
+def require_env(name):
+    """Return the value of an environment variable or abort at startup."""
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return value
+
+
+PORT = int(os.environ.get("PORT", 3000))
+
+GOOGLE_SHEETS_ID = require_env("GOOGLE_SHEETS_ID")
+GOOGLE_API_KEY = require_env("GOOGLE_API_KEY")
+WEBHOOK_SECRET = require_env("WEBHOOK_SECRET")
+
+DOMESTIC_STATUSES = [
+    "canadian citizen", "permanent resident", "refugee", "citizen/pr"
+]
+
+# Contact properties to fetch from HubSpot
+CONTACT_PROPERTIES = [
+    "firstname", "lastname", "email", "phone", "mobilephone",
+    "date_of_birth", "address", "city", "state", "zip", "country",
+    "residence_status", "citizenship", "gender",
+]
+
+
+# ---------------------------------------------------------------------------
+# Data loading
+# ---------------------------------------------------------------------------
+
+def parse_csv_file(filepath):
+    rows = []
+    with open(filepath, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            rows.append({k.strip(): v.strip() for k, v in row.items()})
+    return rows
+
+
+def fetch_google_sheet_tab(tab_name):
+    """Fetch a tab from Google Sheets and return as list of dicts."""
+    import urllib.request as urlreq
+    from urllib.parse import quote
+    url = (
+        f"https://sheets.googleapis.com/v4/spreadsheets/{GOOGLE_SHEETS_ID}"
+        f"/values/{quote(tab_name)}?key={GOOGLE_API_KEY}"
+    )
+    req = urlreq.Request(url)
+    with urlreq.urlopen(req, timeout=15) as resp:
+        data = json.loads(resp.read().decode())
+    values = data.get("values", [])
+    if len(values) < 2:
+        return []
+    headers = [h.strip() for h in values[0]]
+    rows = []
+    for row in values[1:]:
+        obj = {}
+        for i, h in enumerate(headers):
+            obj[h] = row[i].strip() if i < len(row) else ""
+        rows.append(obj)
+    return rows
+
+
+def load_all_data():
+    """Load Programs, Fees, and Outline Map from Google Sheets or CSV.
+
+    Intakes are fetched live per request (they change frequently).
+    """
+    programs, fees, outline_map = [], [], {}
+
+    if GOOGLE_SHEETS_ID and GOOGLE_API_KEY:
+        try:
+            programs = fetch_google_sheet_tab("Programs")
+            fees = fetch_google_sheet_tab("Fees")
+            try:
+                outline_rows = fetch_google_sheet_tab("Outline Map")
+                for row in outline_rows:
+                    if row.get("outline_filename"):
+                        outline_map[row["program_name"].lower()] = row["outline_filename"]
+            except Exception:
+                pass
+            print(f"  Loaded from Google Sheets: {len(programs)} programs, {len(fees)} fees, {len(outline_map)} outlines")
+            return programs, fees, outline_map
+        except Exception as e:
+            print(f"  Google Sheets failed ({e}), falling back to local CSV")
+
+    # Fallback to local CSV
+    programs = parse_csv_file(DATA_DIR / "demo-programs.csv")
+    fees = parse_csv_file(DATA_DIR / "demo-fees.csv")
+    map_path = DATA_DIR / "program-outline-map.csv"
+    if map_path.exists():
+        for row in parse_csv_file(map_path):
+            if row.get("outline_filename"):
+                outline_map[row["program_name"].lower()] = row["outline_filename"]
+    print(f"  Loaded from local CSV: {len(programs)} programs, {len(fees)} fees, {len(outline_map)} outlines")
+    return programs, fees, outline_map
+
+
+try:
+    PROGRAMS, FEES, OUTLINE_MAP = load_all_data()
+except Exception as e:
+    print(f"WARNING: Failed to load data at startup: {e}")
+    PROGRAMS, FEES, OUTLINE_MAP = [], [], {}
+
+
+# ---------------------------------------------------------------------------
+# Core logic
+# ---------------------------------------------------------------------------
+
+def is_domestic(status):
+    if not status:
+        return None
+    return status.lower().strip() in DOMESTIC_STATUSES
+
+
+def fetch_intakes_live(program_name):
+    """Fetch intakes from Google Sheets (live, not cached). Returns all open future intakes."""
+    intakes = []
+    if GOOGLE_SHEETS_ID and GOOGLE_API_KEY:
+        try:
+            all_intakes = fetch_google_sheet_tab("Intakes")
+            now = datetime.now(PST).strftime("%Y-%m-%d")
+            intakes = [
+                i for i in all_intakes
+                if i.get("program_name", "").lower() == program_name.lower()
+                and i.get("status", "").lower() == "open"
+                and i.get("intake_date", "") >= now
+            ]
+            intakes.sort(key=lambda x: x.get("intake_date", ""))
+        except Exception as e:
+            print(f"Intakes fetch error: {e}")
+    return intakes
+
+
+def fetch_contact(deal_id):
+    """Fetch the associated contact for a deal from HubSpot.
+
+    Returns (contact_props, contact_missing) where contact_props is a dict
+    of property values and contact_missing is a list of missing required fields.
+    """
+    import urllib.request as urlreq
+
+    empty_contact = {prop: "" for prop in CONTACT_PROPERTIES}
+    hs_token = require_env("HUBSPOT_TOKEN")
+
+    # Get associated contact ID
+    req = urlreq.Request(
+        f"https://api.hubapi.com/crm/v3/objects/deals/{deal_id}/associations/contacts"
+    )
+    req.add_header("Authorization", f"Bearer {hs_token}")
+    with urlreq.urlopen(req, timeout=15) as resp:
+        assoc = json.loads(resp.read().decode())
+
+    results = assoc.get("results", [])
+    if not results:
+        return empty_contact, ["No contact associated with deal"]
+
+    contact_id = results[0].get("id")
+    if not contact_id:
+        return empty_contact, ["No contact associated with deal"]
+
+    # Fetch contact properties
+    props_param = ",".join(CONTACT_PROPERTIES)
+    req2 = urlreq.Request(
+        f"https://api.hubapi.com/crm/v3/objects/contacts/{contact_id}?properties={props_param}"
+    )
+    req2.add_header("Authorization", f"Bearer {hs_token}")
+    with urlreq.urlopen(req2, timeout=15) as resp2:
+        raw = json.loads(resp2.read().decode())
+
+    props = raw.get("properties", {})
+
+    # Build clean contact object
+    contact = {}
+    for key in CONTACT_PROPERTIES:
+        contact[key] = props.get(key) or ""
+
+    # Use phone or mobilephone
+    if not contact["phone"] and contact.get("mobilephone"):
+        contact["phone"] = contact["mobilephone"]
+
+    # Check for missing required fields
+    missing = []
+    if not contact["firstname"]:
+        missing.append("First Name")
+    if not contact["lastname"]:
+        missing.append("Last Name")
+    if not contact["email"]:
+        missing.append("Email")
+    if not contact["residence_status"]:
+        missing.append("Residence Status")
+
+    # Address completeness
+    addr_parts = [contact["address"], contact["city"], contact["state"], contact["zip"]]
+    addr_filled = sum(1 for p in addr_parts if p)
+    if addr_filled == 0:
+        missing.append("Mailing Address (all fields empty)")
+    elif addr_filled < 3:
+        missing.append("Mailing Address (incomplete)")
+
+    return contact, missing
+
+
+def get_program_data(program_name, residence_status, intake_date=None, contact=None, contact_missing=None):
+    """Return full contract preview data for the CRM card."""
+
+    # Find program
+    program = None
+    for p in PROGRAMS:
+        if p["program_name"].lower() == program_name.lower():
+            program = p
+            break
+
+    if not program:
+        return {"error": f"Program '{program_name}' not found"}
+
+    # Determine fee tier
+    domestic = is_domestic(residence_status)
+    if domestic is None:
+        tier = "Unknown"
+    else:
+        tier = "Domestic" if domestic else "International"
+
+    # Fetch intakes live
+    intakes = fetch_intakes_live(program_name)
+
+    # Fee matching: use intake_date if provided, otherwise today
+    reference_date = intake_date or datetime.now(PST).strftime("%Y-%m-%d")
+    matched_fees, effective_from = match_fees(FEES, program_name, reference_date)
+    fee_items, total = resolve_fee_amounts(matched_fees, domestic)
+
+    # Outline check
+    has_outline = program_name.lower() in OUTLINE_MAP
+
+    return {
+        "program": {
+            "programName": program.get("program_name", ""),
+            "programCode": program.get("program_code", ""),
+            "credential": program.get("credential", ""),
+        },
+        "intakes": intakes,
+        "fees": {
+            "tier": tier,
+            "effectiveFrom": effective_from,
+            "items": fee_items,
+            "total": total,
+            "formattedTotal": f"${total:,.2f}",
+            "count": len(fee_items),
+        },
+        "contact": contact or {prop: "" for prop in CONTACT_PROPERTIES},
+        "contactMissing": contact_missing or [],
+        "dealMissing": [],
+        "hasOutline": has_outline,
+    }
+
+
+# ---------------------------------------------------------------------------
+# HTTP Server
+# ---------------------------------------------------------------------------
+
+class RequestHandler(BaseHTTPRequestHandler):
+    def send_json(self, data, status=200):
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
+
+    def do_OPTIONS(self):
+        self.send_json({})
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+
+        if parsed.path == "/health":
+            self.send_json({
+                "status": "ok",
+                "service": "wcc-contract-generator",
+                "schema": "v2",
+                "programs": len(PROGRAMS),
+                "feeItems": len(FEES),
+                "outlines": len(OUTLINE_MAP),
+            })
+            return
+
+        if parsed.path == "/program-data":
+            params = parse_qs(parsed.query)
+            program_name = params.get("program_name", [""])[0]
+            deal_id = params.get("deal_id", [""])[0]
+            intake_date = params.get("intake_date", [""])[0]
+
+            if not program_name:
+                self.send_json({"error": "program_name is required"}, 400)
+                return
+
+            # Fetch contact from HubSpot
+            contact = {prop: "" for prop in CONTACT_PROPERTIES}
+            contact_missing = []
+            deal_missing = []
+            residence_status = ""
+
+            if deal_id:
+                try:
+                    contact, contact_missing = fetch_contact(deal_id)
+                    residence_status = contact.get("residence_status", "")
+                except Exception as e:
+                    print(f"HubSpot contact lookup error: {e}")
+                    contact_missing.append("Contact lookup failed")
+
+            result = get_program_data(
+                program_name,
+                residence_status,
+                intake_date=intake_date or None,
+                contact=contact,
+                contact_missing=contact_missing,
+            )
+            result["dealMissing"] = deal_missing
+            self.send_json(result)
+            return
+
+        self.send_json({"error": "Not found"}, 404)
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+
+        # --- /reload ---
+        if parsed.path == "/reload":
+            auth_header = self.headers.get("Authorization", "")
+            if auth_header != f"Bearer {WEBHOOK_SECRET}":
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+
+            global PROGRAMS, FEES, OUTLINE_MAP
+            old_counts = (len(PROGRAMS), len(FEES), len(OUTLINE_MAP))
+            try:
+                PROGRAMS, FEES, OUTLINE_MAP = load_all_data()
+                new_counts = (len(PROGRAMS), len(FEES), len(OUTLINE_MAP))
+                print(f"Data reloaded: programs {old_counts[0]}->{new_counts[0]}, fees {old_counts[1]}->{new_counts[1]}, outlines {old_counts[2]}->{new_counts[2]}")
+                self.send_json({
+                    "status": "reloaded",
+                    "programs": new_counts[0],
+                    "fees": new_counts[1],
+                    "outlines": new_counts[2],
+                })
+            except Exception as e:
+                print(f"Reload failed: {e}")
+                self.send_json({"error": f"Reload failed: {e}"}, 500)
+            return
+
+        # --- /generate ---
+        if parsed.path == "/generate":
+            auth_header = self.headers.get("Authorization", "")
+            if auth_header != f"Bearer {WEBHOOK_SECRET}":
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+            except (ValueError, TypeError):
+                self.send_json({"error": "Invalid Content-Length"}, 400)
+                return
+            body = self.rfile.read(content_length).decode()
+
+            try:
+                data = json.loads(body) if body else {}
+                if isinstance(data, str):
+                    data = json.loads(data)
+            except json.JSONDecodeError:
+                self.send_json({"error": "Invalid JSON"}, 400)
+                return
+
+            deal_id = data.get("dealId")
+            if not deal_id:
+                self.send_json({"error": "dealId is required"}, 400)
+                return
+
+            if not re.match(r'^\d{1,20}$', str(deal_id)):
+                self.send_json({"error": "Invalid dealId format"}, 400)
+                return
+
+            intake_date = data.get("intakeDate", "")
+            if intake_date and not re.match(r'^\d{4}-\d{2}-\d{2}$', intake_date):
+                self.send_json({"error": "Invalid intakeDate format (expected YYYY-MM-DD)"}, 400)
+                return
+
+            # Build CLI args
+            import subprocess
+            cmd = [sys.executable, str(SCRIPT_DIR / "generate-contract-v2.py"), str(deal_id)]
+            if intake_date:
+                cmd.append(intake_date)
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+
+            if result.returncode != 0:
+                error_detail = result.stderr.strip() or result.stdout.strip()
+                print(f"Contract generation failed for deal {deal_id}: {error_detail}")
+                self.send_json({"error": "Contract generation failed. Check server logs."}, 500)
+                return
+
+            # Parse output
+            output = result.stdout
+            doc_id = ""
+            doc_url = ""
+            student = ""
+            program = ""
+            fee_tier = ""
+            total = ""
+            fee_count = ""
+
+            for line in output.split("\n"):
+                if "Document ID:" in line:
+                    doc_id = line.split("Document ID:")[-1].strip()
+                if "View:" in line:
+                    doc_url = line.split("View:")[-1].strip()
+                if "Student:" in line and not student:
+                    student = line.split("Student:")[-1].strip()
+                if "Program:" in line and not program:
+                    program = line.split("Program:")[-1].strip()
+                if "Fee tier:" in line or "-> Domestic" in line or "-> International" in line:
+                    fee_tier = "Domestic" if "Domestic" in line else "International"
+                if "TOTAL:" in line:
+                    total = line.split("TOTAL:")[-1].strip()
+                if "fee items" in line:
+                    parts = line.strip().split()
+                    if parts[0].isdigit():
+                        fee_count = parts[0]
+
+            self.send_json({
+                "documentId": doc_id,
+                "documentUrl": doc_url,
+                "student": student,
+                "program": program,
+                "feeTier": fee_tier,
+                "total": total,
+                "feeCount": fee_count,
+            })
+            return
+
+        self.send_json({"error": "Not found"}, 404)
+
+    def log_message(self, format, *args):
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] {format % args}")
+
+
+def main():
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), RequestHandler)
+    print(f"WCC Contract Generator Backend (v2)")
+    print(f"  Listening on port {PORT}")
+    print(f"  Programs: {len(PROGRAMS)}")
+    print(f"  Fee items: {len(FEES)}")
+    print(f"  Outline mappings: {len(OUTLINE_MAP)}")
+    print(f"")
+    print(f"Endpoints:")
+    print(f"  GET  /health          Health check + data counts")
+    print(f"  GET  /program-data    Full contract preview for CRM card")
+    print(f"  POST /generate        Generate contract from deal ID")
+    print(f"  POST /reload          Hot-reload data from Google Sheets")
+    print(f"")
+    print(f"Test:")
+    print(f"  curl http://localhost:{PORT}/health")
+    print(f'  curl "http://localhost:{PORT}/program-data?program_name=Health+Care+Assistant+Diploma&deal_id=58197228338"')
+    print(f'  curl "http://localhost:{PORT}/program-data?program_name=Health+Care+Assistant+Diploma&deal_id=58197228338&intake_date=2026-04-14"')
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

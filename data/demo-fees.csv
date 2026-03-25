@@ -1,0 +1,266 @@
+program_name,effective_from,fee_name,domestic_amount,international_amount,is_tuition,sort_order
+Dementia Care,2026-01-01,Application Fee,50,50,FALSE,1
+Dementia Care,2026-01-01,Tuition Fee,175,175,TRUE,2
+Medication Management,2026-01-01,Application Fee,50,50,FALSE,1
+Medication Management,2026-01-01,Tuition Fee,175,175,TRUE,2
+Medication Management,2026-01-01,Books,175,175,FALSE,3
+Palliative Care,2026-01-01,Application Fee,50,50,FALSE,1
+Palliative Care,2026-01-01,Tuition Fee,175,175,TRUE,2
+Palliative Care,2026-01-01,Books,175,175,FALSE,3
+Certificate in Makeup Artistry Fundamentals,2026-01-01,Application Fee,250,250,FALSE,1
+Certificate in Makeup Artistry Fundamentals,2026-01-01,Tuition Fee,2250,3250,TRUE,2
+Certificate in Makeup Artistry Fundamentals,2026-01-01,Course Materials,250,250,FALSE,3
+Certificate in Makeup Artistry Fundamentals,2026-01-01,Books,890,800,FALSE,4
+Canadian Payroll Administration,2026-01-01,Administration Fee,100,100,FALSE,1
+Canadian Payroll Administration,2026-01-01,Tuition Fee,450,450,TRUE,2
+Canadian Payroll Administration,2026-01-01,Books,175,175,FALSE,3
+Canadian Taxation,2026-01-01,Registration Fee,100,100,FALSE,1
+Canadian Taxation,2026-01-01,Tuition Fee,600,600,TRUE,2
+Canadian Taxation,2026-01-01,Books,175,175,FALSE,3
+Quickbooks for Accounting,2026-01-01,Administration Fee,100,100,FALSE,1
+Quickbooks for Accounting,2026-01-01,Tuition Fee,450,450,TRUE,2
+Quickbooks for Accounting,2026-01-01,Books,175,175,FALSE,3
+Keyboarding Skills,2026-01-01,Application Fee,100,100,FALSE,1
+Keyboarding Skills,2026-01-01,Tuition Fee,300,300,TRUE,2
+Keyboarding Skills,2026-01-01,Books,175,175,FALSE,3
+Food Service Assistant Certificate,2026-01-01,Application Fee,250,250,FALSE,1
+Food Service Assistant Certificate,2026-01-01,Tuition Fee,4420,5380,TRUE,2
+Food Service Assistant Certificate,2026-01-01,Course Materials,300,300,FALSE,3
+Food Service Assistant Certificate,2026-01-01,Books,100,100,FALSE,4
+Basics of Computers,2026-01-01,Administration Fee,100,100,FALSE,1
+Basics of Computers,2026-01-01,Tuition Fee,375,375,TRUE,2
+Basics of Computers,2026-01-01,Books,175,175,FALSE,3
+Network Engineer Diploma,2026-01-01,Application Fee,250,250,FALSE,1
+Network Engineer Diploma,2026-01-01,Tuition Fee,17250,20250,TRUE,2
+Network Engineer Diploma,2026-01-01,Course Materials,500,500,FALSE,3
+Network Engineer Diploma,2026-01-01,Books,175,175,FALSE,4
+Information Systems Diploma,2026-01-01,Application Fee,250,250,FALSE,1
+Information Systems Diploma,2026-01-01,Tuition Fee,8320,11960,TRUE,2
+Information Systems Diploma,2026-01-01,Course Materials,200,200,FALSE,3
+Information Systems Diploma,2026-01-01,Books,780,780,FALSE,4
+Academic Preparation,2026-01-01,Assessment Fee,250,250,FALSE,1
+Academic Preparation,2026-01-01,Tuition Fee,700,700,TRUE,2
+Academic Preparation,2026-01-01,Assessment Fee,30,30,FALSE,3
+CLB Preparation,2026-01-01,Application Fee,100,100,FALSE,1
+CLB Preparation,2026-01-01,Tuition Fee,400,400,TRUE,2
+CLB Preparation,2026-01-01,Books,175,175,FALSE,3
+IELTS Preparation,2026-01-01,Application Fee,100,100,FALSE,1
+IELTS Preparation,2026-01-01,Tuition Fee,675,975,TRUE,2
+IELTS Preparation,2026-01-01,Books,175,175,FALSE,3
+Private Pilot License,2026-01-01,Administration Fee,250,250,FALSE,1
+Private Pilot License,2026-01-01,Application Fee,250,250,FALSE,2
+Private Pilot License,2026-01-01,Ground School Fee,500,500,FALSE,3
+Private Pilot License,2026-01-01,Dual (30 hrs) @$290/hr,8700,8700,FALSE,4
+Private Pilot License,2026-01-01,Solo (15 hrs) @$225/hr,3375,3375,FALSE,5
+Private Pilot License,2026-01-01,Preparatory Ground (PGI/GB),1050,1050,FALSE,6
+Private Pilot License,2026-01-01,Course Materials,750,750,FALSE,7
+Private Pilot License,2026-01-01,Fuel ($50 x 45 hours),2250,2250,FALSE,8
+Private Pilot License,2026-01-01,Books,175,175,FALSE,9
+Warehouse and Logistics Fundamentals Certificate,2026-01-01,Application Fee,250,250,FALSE,1
+Warehouse and Logistics Fundamentals Certificate,2026-01-01,Tuition Fee,4000,6000,TRUE,2
+Warehouse and Logistics Fundamentals Certificate,2026-01-01,Books,500,500,FALSE,3
+Acute Care for HCAs,2026-01-01,Application Fee,250,250,FALSE,1
+Acute Care for HCAs,2026-01-01,Tuition Fee,2250,3250,TRUE,2
+Acute Care for HCAs,2026-01-01,Course Materials,200,200,FALSE,3
+Acute Care for HCAs,2026-01-01,Books,175,175,FALSE,4
+Advanced Accounting Diploma,2026-01-01,Application Fee,250,500,FALSE,1
+Advanced Accounting Diploma,2026-01-01,Tuition Fee,16800,24150,TRUE,2
+Advanced Accounting Diploma,2026-01-01,Book Fee,1500,1500,FALSE,3
+Advanced Accounting Diploma,2026-01-01,Course Materials,200,200,FALSE,4
+Advanced Accounting Diploma,2026-01-01,Books,175,175,FALSE,5
+Business Essentials Certificate,2026-01-01,Application Fee,250,250,FALSE,1
+Business Essentials Certificate,2026-01-01,Tuition Fee,2800,4110,TRUE,2
+Business Essentials Certificate,2026-01-01,Course Materials,200,200,FALSE,3
+Business Essentials Certificate,2026-01-01,Books,175,175,FALSE,4
+Activity Assistant Certificate,2026-01-01,Application Fee,250,250,FALSE,1
+Activity Assistant Certificate,2026-01-01,Tuition Fee,1900,2900,TRUE,2
+Activity Assistant Certificate,2026-01-01,Course Materials,100,100,FALSE,3
+Activity Assistant Certificate,2026-01-01,Books,175,175,FALSE,4
+Addictions Support Worker Diploma,2026-01-01,Application Fee,250,250,FALSE,1
+Addictions Support Worker Diploma,2026-01-01,Tuition Fee,8000,11500,TRUE,2
+Addictions Support Worker Diploma,2026-01-01,Course Materials,200,200,FALSE,3
+Addictions Support Worker Diploma,2026-01-01,Books,1000,1000,FALSE,4
+Cloud Computing Specialist Diploma,2026-01-01,Application Fee,250,250,FALSE,1
+Cloud Computing Specialist Diploma,2026-01-01,Tuition Fee,24250,29000,TRUE,2
+Cloud Computing Specialist Diploma,2026-01-01,Course Materials,500,500,FALSE,3
+Cloud Computing Specialist Diploma,2026-01-01,Books,175,175,FALSE,4
+Post Graduate Diploma in Information Technology,2026-01-01,Application Fee,250,500,FALSE,1
+Post Graduate Diploma in Information Technology,2026-01-01,Tuition Fee,18900,23100,TRUE,2
+Post Graduate Diploma in Information Technology,2026-01-01,Books,780,780,FALSE,3
+Post Graduate Diploma in Health Administration,2026-01-01,Application Fee,250,250,FALSE,1
+Post Graduate Diploma in Health Administration,2026-01-01,Tuition Fee,15000,21000,TRUE,2
+Post Graduate Diploma in Health Administration,2026-01-01,Course Materials,300,300,FALSE,3
+Post Graduate Diploma in Health Administration,2026-01-01,Books,175,175,FALSE,4
+Post Graduate Diploma in Business Management,2026-01-01,Application Fee,250,500,FALSE,1
+Post Graduate Diploma in Business Management,2026-01-01,Tuition Fee,13440,19320,TRUE,2
+Post Graduate Diploma in Business Management,2026-01-01,Book Fee,960,960,FALSE,3
+Post Graduate Diploma in Business Management,2026-01-01,Course Materials,200,200,FALSE,4
+Post Graduate Diploma in Business Management,2026-01-01,Books,175,175,FALSE,5
+Network Administrator Diploma,2026-01-01,Application Fee,250,250,FALSE,1
+Network Administrator Diploma,2026-01-01,Tuition Fee,12000,15000,TRUE,2
+Network Administrator Diploma,2026-01-01,Course Materials,250,250,FALSE,3
+Network Administrator Diploma,2026-01-01,Books,175,175,FALSE,4
+Community Mental Health Certificate,2026-01-01,Registration Fee,250,250,FALSE,1
+Community Mental Health Certificate,2026-01-01,Tuition Fee,1550,1550,TRUE,2
+Community Mental Health Certificate,2026-01-01,Course Materials,50,50,FALSE,3
+Community Mental Health Certificate,2026-01-01,Course Materials,250,250,FALSE,4
+Community Mental Health Certificate,2026-01-01,Books,890,800,FALSE,5
+Commercial Pilot License,2026-01-01,Application Fee,250,250,FALSE,1
+Commercial Pilot License,2026-01-01,Ground School Fee,1000,1000,FALSE,2
+Commercial Pilot License,2026-01-01,Dual (35 hrs) @$290/hr,10150,10150,FALSE,3
+Commercial Pilot License,2026-01-01,Solo (30 hrs) @$225/hr,6750,6750,FALSE,4
+Commercial Pilot License,2026-01-01,Time Building (90 hrs) @$225/hr,20250,20250,FALSE,5
+Commercial Pilot License,2026-01-01,Preparatory Ground (PGI/GB),1050,1050,FALSE,6
+Commercial Pilot License,2026-01-01,Fuel ($50 x 155 hours),7750,7750,FALSE,7
+Commercial Pilot License,2026-01-01,Books,175,175,FALSE,8
+Airline Cabin Crew Diploma,2026-01-01,Application Fee,250,250,FALSE,1
+Airline Cabin Crew Diploma,2026-01-01,Tuition Fee,9500,12500,TRUE,2
+Airline Cabin Crew Diploma,2026-01-01,Course Materials,400,400,FALSE,3
+Airline Cabin Crew Diploma,2026-01-01,Books,175,175,FALSE,4
+Gerontology Diploma,2026-01-01,Application Fee,250,250,FALSE,1
+Gerontology Diploma,2026-01-01,Tuition Fee,6500,8500,TRUE,2
+Gerontology Diploma,2026-01-01,Books,750,750,FALSE,3
+Flight Instructor Rating Program,2026-01-01,Application Fee,250,250,FALSE,1
+Flight Instructor Rating Program,2026-01-01,Tuition Fee,12550,12550,TRUE,2
+Flight Instructor Rating Program,2026-01-01,Books,175,175,FALSE,3
+Pharmacy Assistant,2026-01-01,Application Fee,250,250,FALSE,1
+Pharmacy Assistant,2026-01-01,Tuition Fee,6080,8740,TRUE,2
+Pharmacy Assistant,2026-01-01,Textbooks Fee,700,700,FALSE,3
+Pharmacy Assistant,2026-01-01,Books,175,175,FALSE,4
+Computer Science Fundamentals Diploma,2026-01-01,Application Fee,250,250,FALSE,1
+Computer Science Fundamentals Diploma,2026-01-01,Tuition Fee,5250,8250,TRUE,2
+Computer Science Fundamentals Diploma,2026-01-01,Books,500,500,FALSE,3
+Network Support Technician,2026-01-01,Application Fee,250,250,FALSE,1
+Network Support Technician,2026-01-01,Tuition Fee,5120,7360,TRUE,2
+Network Support Technician,2026-01-01,Course Materials,200,200,FALSE,3
+Network Support Technician,2026-01-01,Text Books,100,100,FALSE,4
+Network Support Technician,2026-01-01,Books,175,175,FALSE,5
+Health Care Assistant Diploma (Access),2026-01-01,Application Fee,250,250,FALSE,1
+Health Care Assistant Diploma (Access),2026-01-01,Tuition Fee,3150,5150,TRUE,2
+Health Care Assistant Diploma (Access),2026-01-01,Course Materials,75,75,FALSE,3
+Health Care Assistant Diploma (Access),2026-01-01,Books,175,175,FALSE,4
+Medical Office Assistant Diploma,2026-01-01,Application Fee,250,250,FALSE,1
+Medical Office Assistant Diploma,2026-01-01,Tuition Fee,6290,8290,TRUE,2
+Medical Office Assistant Diploma,2026-01-01,Textbooks Fee,400,400,FALSE,3
+Medical Office Assistant Diploma,2026-01-01,Books,175,175,FALSE,4
+Business Management Diploma with Co-op,2026-01-01,Application Fee,250,500,FALSE,1
+Business Management Diploma with Co-op,2026-01-01,Tuition Fee,16800,24150,TRUE,2
+Business Management Diploma with Co-op,2026-01-01,Book Fee,900,900,FALSE,3
+Business Management Diploma with Co-op,2026-01-01,Course Materials,200,200,FALSE,4
+Business Management Diploma with Co-op,2026-01-01,Books,175,175,FALSE,5
+Dental Receptionist Certificate,2026-01-01,Application Fee,250,250,FALSE,1
+Dental Receptionist Certificate,2026-01-01,Tuition Fee,3060,5060,TRUE,2
+Dental Receptionist Certificate,2026-01-01,Textbooks Fee,360,360,FALSE,3
+Dental Receptionist Certificate,2026-01-01,Course Materials,200,200,FALSE,4
+Dental Receptionist Certificate,2026-01-01,Books,175,175,FALSE,5
+Education Assistant Diploma,2026-01-01,Application Fee,250,250,FALSE,1
+Education Assistant Diploma,2026-01-01,Tuition Fee,8260,11480,TRUE,2
+Education Assistant Diploma,2026-01-01,Course Materials,250,250,FALSE,3
+Education Assistant Diploma,2026-01-01,Books,890,890,FALSE,4
+Office Administration Certificate,2026-01-01,Application Fee,250,250,FALSE,1
+Office Administration Certificate,2026-01-01,Tuition Fee,3250,5250,TRUE,2
+Office Administration Certificate,2026-01-01,Course Materials,250,250,FALSE,3
+Office Administration Certificate,2026-01-01,Books,890,800,FALSE,4
+Certificate in International Trade,2026-01-01,Application Fee,250,250,FALSE,1
+Certificate in International Trade,2026-01-01,Tuition Fee,3500,3500,TRUE,2
+Certificate in International Trade,2026-01-01,Administration Fee,250,250,FALSE,3
+Certificate in International Trade,2026-01-01,Books,175,175,FALSE,4
+Hospitality Management Diploma,2026-01-01,Application Fee,250,250,FALSE,1
+Hospitality Management Diploma,2026-01-01,Administration Fee,0,250,FALSE,2
+Hospitality Management Diploma,2026-01-01,Tuition Fee,13000,21600,TRUE,3
+Hospitality Management Diploma,2026-01-01,Textbooks Fee,861,861,FALSE,4
+Hospitality Management Diploma,2026-01-01,Other,240,240,FALSE,5
+Hospitality Management Diploma,2026-01-01,Books,175,175,FALSE,6
+Accounting Diploma,2026-01-01,Application Fee,250,250,FALSE,1
+Accounting Diploma,2026-01-01,Administrative Fee,250,250,FALSE,2
+Accounting Diploma,2026-01-01,Tuition Fee,8490,11700,TRUE,3
+Accounting Diploma,2026-01-01,Book Fee,610,610,FALSE,4
+Accounting Diploma,2026-01-01,Other Fee,200,200,FALSE,5
+Accounting Diploma,2026-01-01,Books,175,175,FALSE,6
+Certificate in International Business,2026-01-01,Administration Fee,250,250,FALSE,1
+Certificate in International Business,2026-01-01,Tuition Fee,7500,10500,TRUE,2
+Certificate in International Business,2026-01-01,Application Fee,250,250,FALSE,3
+Certificate in International Business,2026-01-01,Books,175,175,FALSE,4
+Early Childhood Education Assistant,2026-01-01,Application Fee,250,250,FALSE,1
+Early Childhood Education Assistant,2026-01-01,Tuition Fee,1830,2230,TRUE,2
+Early Childhood Education Assistant,2026-01-01,Text Books Fee,120,120,FALSE,3
+English as a Second Language,2026-01-01,Registration Fee,250,250,FALSE,1
+English as a Second Language,2026-01-01,Tuition Fee,4150,5100,TRUE,2
+English as a Second Language,2026-01-01,Books,175,175,FALSE,3
+Medical Device Reprocessing Technician Certificate,2026-01-01,Application Fee,250,250,FALSE,1
+Medical Device Reprocessing Technician Certificate,2026-01-01,Tuition Fee,8500,10500,TRUE,2
+Medical Device Reprocessing Technician Certificate,2026-01-01,Textbooks Fee,430,430,FALSE,3
+Medical Device Reprocessing Technician Certificate,2026-01-01,Course Materials,100,100,FALSE,4
+Medical Device Reprocessing Technician Certificate,2026-01-01,Books,175,175,FALSE,5
+Medical Laboratory Assistant,2026-01-01,Administration Fee,250,250,FALSE,1
+Medical Laboratory Assistant,2026-01-01,Application Fee,250,250,FALSE,2
+Medical Laboratory Assistant,2026-01-01,Tuition Fee,13100,18100,TRUE,3
+Medical Laboratory Assistant,2026-01-01,Course Materials,300,300,FALSE,4
+Medical Laboratory Assistant,2026-01-01,Textbooks,500,500,FALSE,5
+Medical Laboratory Assistant,2026-01-01,Books,175,175,FALSE,6
+Night Rating Program,2026-01-01,Application Fee,250,250,FALSE,1
+Night Rating Program,2026-01-01,Tuition Fee,3900,3900,TRUE,2
+Night Rating Program,2026-01-01,Course Materials,400,400,FALSE,3
+Night Rating Program,2026-01-01,Other,600,600,FALSE,4
+Night Rating Program,2026-01-01,Books,175,175,FALSE,5
+Live in Caregiver Certificate,2026-01-01,Application Fee,250,250,FALSE,1
+Live in Caregiver Certificate,2026-01-01,Textbooks Fee,195,195,FALSE,2
+Live in Caregiver Certificate,2026-01-01,Tuition Fee,4000,7000,TRUE,3
+Live in Caregiver Certificate,2026-01-01,Course Materials,250,250,FALSE,4
+Live in Caregiver Certificate,2026-01-01,Books,890,800,FALSE,5
+Paralegal Diploma,2026-01-01,Application Fee,250,500,FALSE,1
+Paralegal Diploma,2026-01-01,Tuition Fee,16450,23775,TRUE,2
+Paralegal Diploma,2026-01-01,Course Materials,250,250,FALSE,3
+Paralegal Diploma,2026-01-01,Books,150,150,FALSE,4
+Dental Assistant Diploma,2026-01-01,Application Fee,250,250,FALSE,1
+Dental Assistant Diploma,2026-01-01,Tuition Fee,14000,19200,TRUE,2
+Dental Assistant Diploma,2026-01-01,Course Materials,500,500,FALSE,3
+Dental Assistant Diploma,2026-01-01,Other Fee,500,500,FALSE,4
+Dental Assistant Diploma,2026-01-01,Books,175,175,FALSE,5
+Bachelor of Hospitality Management,2026-01-01,Application Fee,250,250,FALSE,1
+Bachelor of Hospitality Management,2026-01-01,Annual Technology Fee,125,125,FALSE,2
+Bachelor of Hospitality Management,2026-01-01,Tuition Fee Per Credit,520,330,TRUE,3
+Bachelor of Hospitality Management,2026-01-01,Books,175,175,FALSE,4
+Business Management Diploma,2026-01-01,Application Fee,250,250,FALSE,1
+Business Management Diploma,2026-01-01,Tuition Fee,8320,11700,TRUE,2
+Business Management Diploma,2026-01-01,Book Fee,834,834,FALSE,3
+Business Management Diploma,2026-01-01,Administration Fee,250,250,FALSE,4
+Business Management Diploma,2026-01-01,Other Fee,100,100,FALSE,5
+Business Management Diploma,2026-01-01,Books,175,175,FALSE,6
+Accounting and Payroll Compliance Professional Certificate,2026-01-01,Application Fee,250,250,FALSE,1
+Accounting and Payroll Compliance Professional Certificate,2026-01-01,Tuition Fee,6500,9500,TRUE,2
+Accounting and Payroll Compliance Professional Certificate,2026-01-01,Text Books,100,100,FALSE,3
+Accounting and Payroll Compliance Professional Certificate,2026-01-01,Books,175,175,FALSE,4
+Bookkeeping and Accounting Certificate,2026-01-01,Application Fee,250,250,FALSE,1
+Bookkeeping and Accounting Certificate,2026-01-01,Tuition Fee,4165,6165,TRUE,2
+Bookkeeping and Accounting Certificate,2026-01-01,Book Fee,195,195,FALSE,3
+Bookkeeping and Accounting Certificate,2026-01-01,Course Materials,140,140,FALSE,4
+Bookkeeping and Accounting Certificate,2026-01-01,Books,175,175,FALSE,5
+Health Care Assistant Diploma,2026-01-01,Application Fee,250,250,FALSE,1
+Health Care Assistant Diploma,2026-01-01,Tuition Fee,7000,9000,TRUE,2
+Health Care Assistant Diploma,2026-01-01,Course Materials,75,75,FALSE,3
+Health Care Assistant Diploma,2026-01-01,Books,175,175,FALSE,4
+Health Care Assistant with ESL Diploma,2026-01-01,Application Fee,250,250,FALSE,1
+Health Care Assistant with ESL Diploma,2026-01-01,Tuition Fee,7250,12750,TRUE,2
+Health Care Assistant with ESL Diploma,2026-01-01,Course Materials,75,75,FALSE,3
+Health Care Assistant with ESL Diploma,2026-01-01,Books,175,175,FALSE,4
+Pharmacy Technician Diploma Program,2026-01-01,Application Fee,250,250,FALSE,1
+Pharmacy Technician Diploma Program,2026-01-01,Tuition Fee,14950,17950,TRUE,2
+Pharmacy Technician Diploma Program,2026-01-01,Course Materials,950,950,FALSE,3
+Pharmacy Technician Diploma Program,2026-01-01,Textbooks Fee,700,700,FALSE,4
+Pharmacy Technician Diploma Program,2026-01-01,Books,175,175,FALSE,5
+Registered Massage Therapy Program,2026-01-01,Application Fee,250,250,FALSE,1
+Registered Massage Therapy Program,2026-01-01,Tuition Fee,36042,46042,TRUE,2
+Registered Massage Therapy Program,2026-01-01,Textbooks Fee,1235,1235,FALSE,3
+Registered Massage Therapy Program,2026-01-01,Other Materials,700,700,FALSE,4
+Registered Massage Therapy Program,2026-01-01,Books,175,175,FALSE,5
+Community Support Worker Diploma,2026-01-01,Application Fee,250,250,FALSE,1
+Community Support Worker Diploma,2026-01-01,Tuition Fee,8670,13060,TRUE,2
+Community Support Worker Diploma,2026-01-01,Course Materials,100,100,FALSE,3
+Community Support Worker Diploma,2026-01-01,Books,750,750,FALSE,4
+Early Childhood Education,2026-01-01,Administration Fee,250,250,FALSE,1
+Early Childhood Education,2026-01-01,Application Fee,250,250,FALSE,2
+Early Childhood Education,2026-01-01,Tuition Fee,17810,22060,TRUE,3
+Early Childhood Education,2026-01-01,Course Materials,200,200,FALSE,4
+Early Childhood Education,2026-01-01,Textbooks Fee,530,530,FALSE,5
+Early Childhood Education,2026-01-01,Books,175,175,FALSE,6

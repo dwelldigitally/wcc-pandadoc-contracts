@@ -1,0 +1,24 @@
+{
+  "uid": "wcc-contract-generator",
+  "type": "app",
+  "config": {
+    "name": "WCC Contract Generator",
+    "description": "Generate student enrollment contracts from HubSpot deals",
+    "distribution": "private",
+    "auth": {
+      "type": "static",
+      "requiredScopes": [
+        "oauth",
+        "crm.objects.deals.read",
+        "crm.objects.contacts.read"
+      ],
+      "optionalScopes": [],
+      "conditionallyRequiredScopes": []
+    },
+    "permittedUrls": {
+      "fetch": ["https://wcc-contract-generator-production.up.railway.app"],
+      "iframe": [],
+      "img": []
+    }
+  }
+}

@@ -1,10 +1,29 @@
 # Environment
 .env
 .env.local
+.env.production
 
 # API keys
 *.key
 *credentials*
+
+# Generated contracts
+output/
+
+# Node
+node_modules/
+package-lock.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# HubSpot CLI
+.hscli/
+
+# Playwright test artifacts
+.playwright-mcp/
 
 # OS
 .DS_Store
@@ -17,3 +36,9 @@ Thumbs.db
 # Temp
 *.tmp
 *.bak
+
+# Screenshots (e2e testing)
+pandadoc-*.png
+v2-*.png
+signing-template.png
+card-library-search.png

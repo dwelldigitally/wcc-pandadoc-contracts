@@ -1,0 +1,11 @@
+{
+  "uid": "contract-generator-card",
+  "type": "card",
+  "config": {
+    "name": "Contract Generator",
+    "description": "Generate enrollment contracts with pre-filled student data, program fees, and program outlines",
+    "location": "crm.record.tab",
+    "entrypoint": "/app/cards/ContractGenerator.jsx",
+    "objectTypes": ["DEAL"]
+  }
+}
