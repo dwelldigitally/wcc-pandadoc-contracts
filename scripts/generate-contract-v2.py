@@ -694,6 +694,16 @@ def download_outline_from_drive(file_id, api_key):
         print(f"  Invalid file_id format: {file_id}")
         return None
 
+    # Clean up cached files older than 24 hours
+    if OUTLINE_CACHE_DIR.exists():
+        now = time.time()
+        for cached_file in OUTLINE_CACHE_DIR.glob("*.pdf"):
+            try:
+                if now - cached_file.stat().st_mtime > 86400:  # 24 hours
+                    cached_file.unlink()
+            except Exception:
+                pass
+
     OUTLINE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cached_path = OUTLINE_CACHE_DIR / f"{file_id}.pdf"
 
@@ -857,13 +867,13 @@ def main():
     if domestic is None:
         print(f"\nERROR: residence_status is not set on the contact.")
         print(f"   Set it in HubSpot first (Canadian Citizen, Permanent Resident, International Study Permit, etc.)")
-        print(f"   Contact: {contact.get('firstname', '')} {contact.get('lastname', '')} ({contact.get('email', '')})")
+        print(f"   Contact: [redacted] (deal {deal_id})")
         sys.exit(1)
 
     tier = "Domestic" if domestic else "International"
 
-    print(f"   Student: {contact.get('firstname', '')} {contact.get('lastname', '')}")
-    print(f"   Email:   {contact.get('email', '')}")
+    print(f"   Student: {contact.get('firstname', '')[0]}*** {contact.get('lastname', '')[0]}***")
+    print(f"   Email:   [redacted]")
     print(f"   Program: {program_name}")
     print(f"   Status:  {residence_status} -> {tier}")
 
@@ -946,7 +956,7 @@ def main():
 
     # Step 5: Look up outline + split DOCX if outline exists
     advisor = hs["advisor"]
-    print(f"   Advisor: {advisor.get('firstName', '')} {advisor.get('lastName', '')} ({advisor.get('email', '')})")
+    print(f"   Advisor: {advisor.get('firstName', '')} {advisor.get('lastName', '')}")
 
     outline_map = load_outline_map()
     outline_path = get_outline_path(outline_map, program_name, GOOGLE_API_KEY)
@@ -1076,13 +1086,26 @@ def main():
 
     doc_url = f"https://app.pandadoc.com/a/#/documents/{doc_id}"
 
+    # Cleanup: remove local DOCX files containing student PII
+    try:
+        if output_path.exists():
+            output_path.unlink()
+        # Also clean up split parts if they exist
+        part1 = output_path.parent / (output_path.stem + "_part1.docx")
+        part2 = output_path.parent / (output_path.stem + "_part2.docx")
+        if part1.exists():
+            part1.unlink()
+        if part2.exists():
+            part2.unlink()
+    except Exception as e:
+        print(f"   Warning: Could not clean up local files: {e}")
+
     # Done
     print("\n" + "=" * 50)
     print("CONTRACT CREATED SUCCESSFULLY")
     print("=" * 50)
-    print(f"Document: {doc_name}")
+    print(f"Document ID: {doc_id}")
     print(f"View:     {doc_url}")
-    print(f"Local:    {output_path}")
     print(f"Fee tier: {tier}")
     if effective_from:
         print(f"Fees effective from: {effective_from}")
