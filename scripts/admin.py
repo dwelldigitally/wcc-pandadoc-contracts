@@ -1,8 +1,8 @@
 """
 WCC Contract Generator — Streamlit Admin Panel
 
-Reads/writes Google Sheets data for Programs, Intakes, Fees, Outline Map.
-Provides validated CRUD with field-level audit logging.
+Inline-editable data grid dashboard for Programs, Intakes, Fees, Outline Map.
+Provides spreadsheet-style CRUD with field-level audit logging to Google Sheets.
 
 Environment variables:
     ADMIN_PASSWORD              — Password for admin login
@@ -59,28 +59,23 @@ AUDIT_HEADERS = [
     "new_value",
 ]
 
-STATUS_COLORS = {
-    "Open": "#22c55e",
-    "Closed": "#ef4444",
-    "Waitlist": "#eab308",
-}
-
 NAV_ITEMS = [
     "Programs",
     "Intakes",
     "Fees",
     "Outline Map",
+    "---",
     "Audit Log",
     "Contract Log",
 ]
 
 NAV_ICONS = {
-    "Programs": "🎓",
-    "Intakes": "📅",
-    "Fees": "💰",
-    "Outline Map": "📋",
-    "Audit Log": "📝",
-    "Contract Log": "📄",
+    "Programs": "graduation-cap",
+    "Intakes": "calendar-range",
+    "Fees": "dollar-sign",
+    "Outline Map": "clipboard-list",
+    "Audit Log": "file-text",
+    "Contract Log": "file-signature",
 }
 
 # ---------------------------------------------------------------------------
@@ -123,7 +118,11 @@ def get_gspread_client():
             creds_dict = json.loads(creds_json)
 
     if not creds_dict:
-        st.error("Service account credentials not found. Set GOOGLE_SERVICE_ACCOUNT in Streamlit secrets or GOOGLE_SERVICE_ACCOUNT_JSON env var.")
+        st.error(
+            "Service account credentials not found. "
+            "Set GOOGLE_SERVICE_ACCOUNT in Streamlit secrets "
+            "or GOOGLE_SERVICE_ACCOUNT_JSON env var."
+        )
         st.stop()
 
     scope = [
@@ -318,18 +317,6 @@ def filter_dataframe(df: pd.DataFrame, search_text: str) -> pd.DataFrame:
     return df[mask]
 
 
-def colored_status(status: str) -> str:
-    """Return an HTML-colored status badge string."""
-    color = STATUS_COLORS.get(status, "#6b7280")
-    return f'<span style="background:{color};color:white;padding:2px 10px;border-radius:12px;font-size:0.85em;font-weight:600;">{status}</span>'
-
-
-def init_session_key(key: str, default=None):
-    """Initialize a session state key if not already set."""
-    if key not in st.session_state:
-        st.session_state[key] = default
-
-
 # ---------------------------------------------------------------------------
 # Authentication
 # ---------------------------------------------------------------------------
@@ -340,9 +327,22 @@ def check_auth():
     if st.session_state.get("authenticated"):
         return True
 
-    st.title("WCC Admin Panel — Login")
+    st.markdown(
+        '<div style="display:flex;justify-content:center;padding-top:60px;">'
+        '<div style="width:400px;">',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<h1 style="text-align:center;color:#1E293B;">WCC Admin</h1>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<p style="text-align:center;color:#64748B;margin-bottom:32px;">'
+        "Sign in to manage contract data</p>",
+        unsafe_allow_html=True,
+    )
     password = st.text_input("Password", type="password", key="login_pw")
-    if st.button("Login"):
+    if st.button("Sign In", type="primary", use_container_width=True):
         expected = ""
         if hasattr(st, "secrets"):
             expected = st.secrets.get("ADMIN_PASSWORD", "")
@@ -356,7 +356,294 @@ def check_auth():
             st.rerun()
         else:
             st.error("Incorrect password.")
+    st.markdown("</div></div>", unsafe_allow_html=True)
     return False
+
+
+# ---------------------------------------------------------------------------
+# Change detection and save logic
+# ---------------------------------------------------------------------------
+
+
+def detect_changes(original_df, edited_df, key_columns, data_columns):
+    """Compare original and edited DataFrames.
+
+    Returns a dict with keys: edited, added, deleted.
+    - edited: list of dicts describing cell-level changes
+    - added: list of dicts for new rows
+    - deleted: list of dicts for rows marked for deletion
+    """
+    changes = {"edited": [], "added": [], "deleted": []}
+
+    # Work on copies to avoid mutation
+    work_edited = edited_df.copy()
+
+    # Detect deletes (rows with delete checkbox checked)
+    if "delete" in work_edited.columns:
+        to_delete = work_edited[work_edited["delete"] == True]  # noqa: E712
+        changes["deleted"] = to_delete.to_dict("records")
+        work_edited = work_edited[work_edited["delete"] != True]  # noqa: E712
+
+    # Detect new rows (rows beyond the original length, after removing deletes)
+    original_count = len(original_df)
+    # Account for deleted rows that were in original range
+    deleted_in_original = 0
+    for rec in changes["deleted"]:
+        # Check if this deleted row was from the original set
+        for idx in range(original_count):
+            orig_row = original_df.iloc[idx]
+            match = all(
+                str(orig_row.get(kc, "")) == str(rec.get(kc, ""))
+                for kc in key_columns
+                if kc in orig_row.index and kc in rec
+            )
+            if match:
+                deleted_in_original += 1
+                break
+
+    # New rows are those in edited_df (with delete=False) that don't match originals
+    if len(work_edited) > (original_count - deleted_in_original):
+        new_count = len(work_edited) - (original_count - deleted_in_original)
+        new_rows = work_edited.tail(new_count)
+        changes["added"] = new_rows.to_dict("records")
+
+    # Detect edits (compare cell-by-cell for existing rows that aren't deleted)
+    compare_cols = [c for c in data_columns if c != "delete"]
+    surviving_original_count = original_count - deleted_in_original
+    compare_count = min(surviving_original_count, len(work_edited) - len(changes["added"]))
+
+    # Build a mapping from remaining edited rows back to original rows
+    edited_existing = work_edited.head(compare_count)
+    orig_idx = 0
+    for edit_idx in range(compare_count):
+        # Skip original rows that were deleted
+        while orig_idx < original_count:
+            orig_row = original_df.iloc[orig_idx]
+            was_deleted = False
+            for rec in changes["deleted"]:
+                match = all(
+                    str(orig_row.get(kc, "")) == str(rec.get(kc, ""))
+                    for kc in key_columns
+                    if kc in orig_row.index and kc in rec
+                )
+                if match:
+                    was_deleted = True
+                    break
+            if not was_deleted:
+                break
+            orig_idx += 1
+
+        if orig_idx >= original_count:
+            break
+
+        edited_row = edited_existing.iloc[edit_idx]
+        orig_row = original_df.iloc[orig_idx]
+
+        for col in compare_cols:
+            old_val = str(orig_row.get(col, ""))
+            new_val = str(edited_row.get(col, ""))
+            if old_val != new_val:
+                identifier = str(edited_row.get(key_columns[0], f"row-{edit_idx}"))
+                changes["edited"].append({
+                    "row_sheet_index": orig_idx,
+                    "col": col,
+                    "old": old_val,
+                    "new": new_val,
+                    "identifier": identifier,
+                })
+        orig_idx += 1
+
+    return changes
+
+
+def build_change_summary(changes):
+    """Return a human-readable summary string for changes."""
+    parts = []
+    n_edited = len(changes["edited"])
+    n_added = len(changes["added"])
+    n_deleted = len(changes["deleted"])
+
+    if n_edited > 0:
+        parts.append(f"{n_edited} cell{'s' if n_edited != 1 else ''} edited")
+    if n_added > 0:
+        parts.append(f"{n_added} row{'s' if n_added != 1 else ''} added")
+    if n_deleted > 0:
+        parts.append(f"{n_deleted} row{'s' if n_deleted != 1 else ''} to delete")
+
+    if not parts:
+        return ""
+    return ", ".join(parts)
+
+
+def apply_changes(sheet_name, changes, key_columns, data_columns, original_df):
+    """Apply detected changes to Google Sheets and log each action.
+
+    Returns (success_count, error_messages).
+    """
+    success = 0
+    errors = []
+    columns_no_delete = [c for c in data_columns if c != "delete"]
+
+    # Process deletes first (in reverse order to keep row indices stable)
+    delete_indices = []
+    for rec in changes["deleted"]:
+        match = {k: str(rec.get(k, "")) for k in key_columns if k in rec}
+        if len(match) == 1:
+            col_name = list(match.keys())[0]
+            idx = find_row_index(sheet_name, col_name, match[col_name])
+        else:
+            idx = find_row_index_multi(sheet_name, match)
+        if idx is not None:
+            delete_indices.append((idx, rec))
+        else:
+            identifier = str(rec.get(key_columns[0], "unknown"))
+            errors.append(f"Could not find row to delete: {identifier}")
+
+    # Sort in reverse so higher row indices are deleted first
+    delete_indices.sort(key=lambda x: x[0], reverse=True)
+    for idx, rec in delete_indices:
+        clean = {k: v for k, v in rec.items() if k != "delete"}
+        identifier = str(rec.get(key_columns[0], "unknown"))
+        try:
+            delete_row(sheet_name, idx)
+            log_delete(sheet_name, identifier, clean)
+            success += 1
+        except Exception as exc:
+            errors.append(f"Delete failed for {identifier}: {exc}")
+
+    # Process edits (grouped by row)
+    edited_rows = {}
+    for change in changes["edited"]:
+        row_idx = change["row_sheet_index"]
+        if row_idx not in edited_rows:
+            edited_rows[row_idx] = []
+        edited_rows[row_idx].append(change)
+
+    for row_idx, cell_changes in edited_rows.items():
+        orig_row = original_df.iloc[row_idx]
+        # Build the updated row values
+        new_row_dict = {c: str(orig_row.get(c, "")) for c in columns_no_delete}
+        for cc in cell_changes:
+            new_row_dict[cc["col"]] = cc["new"]
+
+        match = {k: str(orig_row.get(k, "")) for k in key_columns}
+        if len(match) == 1:
+            col_name = list(match.keys())[0]
+            sheet_idx = find_row_index(sheet_name, col_name, match[col_name])
+        else:
+            sheet_idx = find_row_index_multi(sheet_name, match)
+
+        if sheet_idx is not None:
+            row_values = [new_row_dict.get(c, "") for c in columns_no_delete]
+            try:
+                update_row(sheet_name, sheet_idx, row_values)
+                identifier = cell_changes[0]["identifier"]
+                for cc in cell_changes:
+                    log_audit(
+                        "UPDATE", sheet_name, identifier,
+                        cc["col"], cc["old"], cc["new"],
+                    )
+                success += 1
+            except Exception as exc:
+                errors.append(f"Update failed for row {row_idx}: {exc}")
+        else:
+            errors.append(f"Could not find row to update at original index {row_idx}")
+
+    # Process adds
+    for rec in changes["added"]:
+        row_values = [str(rec.get(c, "")) for c in columns_no_delete]
+        identifier = str(rec.get(key_columns[0], "new"))
+        try:
+            append_row(sheet_name, row_values)
+            field_dict = {c: str(rec.get(c, "")) for c in columns_no_delete}
+            log_create(sheet_name, identifier, field_dict)
+            success += 1
+        except Exception as exc:
+            errors.append(f"Add failed for {identifier}: {exc}")
+
+    return success, errors
+
+
+# ---------------------------------------------------------------------------
+# Shared UI components
+# ---------------------------------------------------------------------------
+
+
+def render_metric_card(label, value, prefix=""):
+    """Render a single metric inside a styled container."""
+    display_val = f"{prefix}{value}" if prefix else str(value)
+    st.metric(label=label, value=display_val)
+
+
+def render_search_bar(key, placeholder="Search..."):
+    """Render a search input and return the current text."""
+    return st.text_input(
+        "Search",
+        key=key,
+        placeholder=placeholder,
+        label_visibility="collapsed",
+    )
+
+
+def render_save_button(changes, key):
+    """Render the save changes button with a change summary.
+
+    Returns True if the user confirmed save.
+    """
+    summary = build_change_summary(changes)
+    has_changes = bool(summary)
+
+    if not has_changes:
+        st.button(
+            "No changes to save",
+            key=key,
+            disabled=True,
+            use_container_width=True,
+        )
+        return False
+
+    # Show confirmation flow
+    confirm_key = f"{key}_confirmed"
+    if confirm_key not in st.session_state:
+        st.session_state[confirm_key] = False
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        if st.button(
+            f"Save Changes ({summary})",
+            key=key,
+            type="primary",
+            use_container_width=True,
+        ):
+            st.session_state[confirm_key] = True
+            st.rerun()
+    with col2:
+        if st.session_state.get(confirm_key):
+            if st.button("Cancel", key=f"{key}_cancel", use_container_width=True):
+                st.session_state[confirm_key] = False
+                st.rerun()
+
+    if st.session_state.get(confirm_key):
+        st.warning(f"Confirm: {summary}. This cannot be undone.")
+        if st.button(
+            "Confirm and Apply",
+            key=f"{key}_apply",
+            type="primary",
+        ):
+            st.session_state[confirm_key] = False
+            return True
+
+    return False
+
+
+def ensure_columns(df, columns, defaults=None):
+    """Ensure a DataFrame has the expected columns. Add missing ones with defaults."""
+    defaults = defaults or {}
+    result = df.copy()
+    for col in columns:
+        if col not in result.columns:
+            result[col] = defaults.get(col, "")
+    return result[columns]
 
 
 # ---------------------------------------------------------------------------
@@ -364,178 +651,103 @@ def check_auth():
 # ---------------------------------------------------------------------------
 
 
-def _validate_program(name: str, code: str, existing_df: pd.DataFrame) -> list[str]:
-    errors = []
-    if not name or not name.strip():
-        errors.append("Program Name is required.")
-    if not code or not code.strip():
-        errors.append("Program Code is required.")
-    if not existing_df.empty:
-        if name.strip() in existing_df["program_name"].values:
-            errors.append(f"Program Name '{name.strip()}' already exists.")
-        if code.strip().upper() in existing_df["program_code"].str.upper().values:
-            errors.append(f"Program Code '{code.strip().upper()}' already exists.")
-    return errors
-
-
 def render_programs_tab():
     df = read_sheet(SHEET_PROGRAMS)
 
-    # --- Summary metrics ---
-    m1, m2, m3, m4 = st.columns(4)
-    total = len(df) if not df.empty else 0
-    cred_counts = {}
-    if not df.empty and "credential" in df.columns:
-        cred_counts = df["credential"].value_counts().to_dict()
-    m1.metric("Total Programs", total)
-    m2.metric("Certificates", cred_counts.get("Certificate", 0))
-    m3.metric("Diplomas", cred_counts.get("Diploma", 0))
-    m4.metric("Bachelors", cred_counts.get("Bachelor", 0))
-
-    st.divider()
-
-    # --- Search bar ---
-    search = st.text_input("Search programs...", key="prog_search", placeholder="Type to filter by name, code, or credential")
-    display_df = filter_dataframe(df, search) if not df.empty else df
-
-    # --- Data table ---
-    if not display_df.empty:
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "program_name": st.column_config.TextColumn("Program Name", width="large"),
-                "program_code": st.column_config.TextColumn("Code", width="small"),
-                "credential": st.column_config.TextColumn("Credential", width="medium"),
-            },
-        )
+    expected_cols = ["program_name", "program_code", "credential"]
+    if df.empty:
+        df = pd.DataFrame(columns=expected_cols)
     else:
-        st.info("No programs found." if not search else "No programs match your search.")
+        df = ensure_columns(df, expected_cols)
 
-    st.divider()
+    # Metrics row
+    total = len(df)
+    cred_counts = df["credential"].value_counts().to_dict() if not df.empty else {}
 
-    # --- Action buttons ---
-    init_session_key("prog_mode", None)
-    init_session_key("prog_edit_name", None)
-    init_session_key("prog_delete_name", None)
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        render_metric_card("Total Programs", total)
+    with m2:
+        render_metric_card("Certificates", cred_counts.get("Certificate", 0))
+    with m3:
+        render_metric_card("Diplomas", cred_counts.get("Diploma", 0))
+    with m4:
+        render_metric_card("Bachelors", cred_counts.get("Bachelor", 0))
 
-    btn_cols = st.columns([1, 1, 1, 4])
-    with btn_cols[0]:
-        if st.button("Add New", key="prog_add_btn", use_container_width=True):
-            st.session_state["prog_mode"] = "add"
-            st.session_state["prog_edit_name"] = None
-            st.session_state["prog_delete_name"] = None
-    with btn_cols[1]:
-        if st.button("Edit", key="prog_edit_btn", use_container_width=True, disabled=df.empty):
-            st.session_state["prog_mode"] = "edit"
-            st.session_state["prog_delete_name"] = None
-    with btn_cols[2]:
-        if st.button("Delete", key="prog_del_btn", use_container_width=True, disabled=df.empty, type="secondary"):
-            st.session_state["prog_mode"] = "delete"
-            st.session_state["prog_edit_name"] = None
+    st.markdown("---")
 
-    mode = st.session_state.get("prog_mode")
+    # Search + filter row
+    search_col, _ = st.columns([2, 3])
+    with search_col:
+        search = render_search_bar("prog_search", "Search programs by name, code...")
 
-    # --- Add form ---
-    if mode == "add":
-        st.subheader("Add Program")
-        with st.form("add_program", clear_on_submit=True):
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                name = st.text_input("Program Name *")
-            with c2:
-                code = st.text_input("Program Code *")
-            with c3:
-                credential = st.selectbox("Credential *", CREDENTIAL_OPTIONS)
-            fc1, fc2 = st.columns([1, 6])
-            with fc1:
-                submitted = st.form_submit_button("Add Program", type="primary")
-            with fc2:
-                cancel = st.form_submit_button("Cancel")
+    # Prepare editable dataframe
+    display_df = filter_dataframe(df, search) if not df.empty else df
+    display_df = display_df.copy()
+    display_df["delete"] = False
 
-        if cancel:
-            st.session_state["prog_mode"] = None
+    # Store original for comparison (the filtered view only)
+    original_df = df.copy()
+
+    edited_df = st.data_editor(
+        display_df,
+        column_config={
+            "program_name": st.column_config.TextColumn(
+                "Program Name",
+                required=True,
+                width="large",
+            ),
+            "program_code": st.column_config.TextColumn(
+                "Program Code",
+                required=True,
+            ),
+            "credential": st.column_config.SelectboxColumn(
+                "Credential",
+                options=CREDENTIAL_OPTIONS,
+                required=True,
+            ),
+            "delete": st.column_config.CheckboxColumn(
+                "Delete",
+                default=False,
+                width="small",
+            ),
+        },
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True,
+        key="programs_editor",
+    )
+
+    if not df.empty or len(edited_df) > len(display_df):
+        st.caption(f"{len(display_df)} program{'s' if len(display_df) != 1 else ''} shown")
+
+    # Detect changes
+    changes = detect_changes(
+        original_df=display_df.drop(columns=["delete"], errors="ignore"),
+        edited_df=edited_df,
+        key_columns=["program_name"],
+        data_columns=["program_name", "program_code", "credential", "delete"],
+    )
+
+    st.markdown("")
+    confirmed = render_save_button(changes, "prog_save")
+
+    if confirmed:
+        with st.spinner("Saving changes to Google Sheets..."):
+            ok, errs = apply_changes(
+                SHEET_PROGRAMS,
+                changes,
+                key_columns=["program_name"],
+                data_columns=["program_name", "program_code", "credential", "delete"],
+                original_df=display_df.drop(columns=["delete"], errors="ignore"),
+            )
+        if errs:
+            for e in errs:
+                st.error(e)
+        if ok > 0:
+            st.success(f"Saved {ok} change{'s' if ok != 1 else ''} successfully.")
+            st.cache_resource.clear()
             st.rerun()
-        if submitted:
-            errors = _validate_program(name, code, df)
-            if errors:
-                for e in errors:
-                    st.error(e)
-            else:
-                row = [name.strip(), code.strip().upper(), credential]
-                append_row(SHEET_PROGRAMS, row)
-                log_create(SHEET_PROGRAMS, name.strip(), {
-                    "program_name": name.strip(),
-                    "program_code": code.strip().upper(),
-                    "credential": credential,
-                })
-                st.session_state["prog_mode"] = None
-                st.toast(f"Program '{name.strip()}' added successfully!")
-                st.rerun()
-
-    # --- Edit form ---
-    if mode == "edit" and not df.empty:
-        st.subheader("Edit Program")
-        sel = st.selectbox("Select program to edit", df["program_name"].tolist(), key="edit_prog_sel")
-        if sel:
-            row_data = df[df["program_name"] == sel].iloc[0].to_dict()
-            with st.form("edit_program"):
-                c1, c2 = st.columns(2)
-                with c1:
-                    new_code = st.text_input("Program Code", value=str(row_data.get("program_code", "")))
-                with c2:
-                    new_cred = st.selectbox(
-                        "Credential",
-                        CREDENTIAL_OPTIONS,
-                        index=CREDENTIAL_OPTIONS.index(row_data["credential"])
-                        if row_data.get("credential") in CREDENTIAL_OPTIONS else 0,
-                    )
-                fc1, fc2 = st.columns([1, 6])
-                with fc1:
-                    submitted = st.form_submit_button("Save Changes", type="primary")
-                with fc2:
-                    cancel = st.form_submit_button("Cancel")
-
-            if cancel:
-                st.session_state["prog_mode"] = None
-                st.rerun()
-            if submitted:
-                new_row = {
-                    "program_name": sel,
-                    "program_code": new_code.strip().upper(),
-                    "credential": new_cred,
-                }
-                idx = find_row_index(SHEET_PROGRAMS, "program_name", sel)
-                if idx:
-                    update_row(SHEET_PROGRAMS, idx, list(new_row.values()))
-                    log_update(SHEET_PROGRAMS, sel, row_data, new_row)
-                    st.session_state["prog_mode"] = None
-                    st.toast("Program updated successfully!")
-                    st.rerun()
-
-    # --- Delete with confirmation ---
-    if mode == "delete" and not df.empty:
-        st.subheader("Delete Program")
-        sel_del = st.selectbox("Select program to delete", df["program_name"].tolist(), key="del_prog_sel")
-        if sel_del:
-            old = df[df["program_name"] == sel_del].iloc[0].to_dict()
-            st.warning(f"You are about to delete **{sel_del}** (Code: {old.get('program_code', 'N/A')}, Credential: {old.get('credential', 'N/A')})")
-            st.caption("This action cannot be undone.")
-            dc1, dc2, dc3 = st.columns([1, 1, 5])
-            with dc1:
-                if st.button("Confirm Delete", type="primary", key="prog_confirm_del"):
-                    idx = find_row_index(SHEET_PROGRAMS, "program_name", sel_del)
-                    if idx:
-                        delete_row(SHEET_PROGRAMS, idx)
-                        log_delete(SHEET_PROGRAMS, sel_del, old)
-                        st.session_state["prog_mode"] = None
-                        st.toast(f"Program '{sel_del}' deleted.")
-                        st.rerun()
-            with dc2:
-                if st.button("Cancel", key="prog_cancel_del"):
-                    st.session_state["prog_mode"] = None
-                    st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -543,40 +755,60 @@ def render_programs_tab():
 # ---------------------------------------------------------------------------
 
 
-def _validate_intake(intake_dt, end_dt) -> list[str]:
-    errors = []
-    if end_dt <= intake_dt:
-        errors.append("End Date must be after Intake Date.")
-    return errors
-
-
 def render_intakes_tab():
     df = read_sheet(SHEET_INTAKES)
     programs = get_program_names()
 
-    # --- Summary metrics ---
+    expected_cols = [
+        "program_name", "intake_date", "end_date", "campus",
+        "hours", "weeks", "spots_available", "status",
+        "domestic_delivery_method", "international_delivery_method",
+    ]
+    if df.empty:
+        df = pd.DataFrame(columns=expected_cols)
+    else:
+        df = ensure_columns(df, expected_cols)
+
+    # Cast numeric columns
+    if not df.empty:
+        df["spots_available"] = df["spots_available"].apply(lambda x: safe_int(x, 0))
+        df["hours"] = df["hours"].apply(lambda x: str(x) if x else "")
+        df["weeks"] = df["weeks"].apply(lambda x: str(x) if x else "")
+
+    # Metrics
+    total = len(df)
+    status_counts = df["status"].value_counts().to_dict() if not df.empty else {}
+
     m1, m2, m3, m4 = st.columns(4)
-    total = len(df) if not df.empty else 0
-    status_counts = {}
-    if not df.empty and "status" in df.columns:
-        status_counts = df["status"].value_counts().to_dict()
-    m1.metric("Total Intakes", total)
-    m2.metric("Open", status_counts.get("Open", 0))
-    m3.metric("Closed", status_counts.get("Closed", 0))
-    m4.metric("Waitlist", status_counts.get("Waitlist", 0))
+    with m1:
+        render_metric_card("Total Intakes", total)
+    with m2:
+        render_metric_card("Open", status_counts.get("Open", 0))
+    with m3:
+        render_metric_card("Closed", status_counts.get("Closed", 0))
+    with m4:
+        render_metric_card("Waitlist", status_counts.get("Waitlist", 0))
 
-    st.divider()
+    st.markdown("---")
 
-    # --- Filters ---
-    fc1, fc2, fc3 = st.columns([2, 1, 3])
+    # Filters
+    fc1, fc2, fc3 = st.columns([2, 1, 2])
     with fc1:
-        prog_filter = st.selectbox("Filter by Program", ["All Programs"] + programs, key="int_prog_filter")
+        prog_filter = st.selectbox(
+            "Filter by Program",
+            ["All Programs"] + programs,
+            key="int_prog_filter",
+        )
     with fc2:
-        status_filter = st.selectbox("Filter by Status", ["All"] + STATUS_OPTIONS, key="int_status_filter")
+        status_filter = st.selectbox(
+            "Filter by Status",
+            ["All"] + STATUS_OPTIONS,
+            key="int_status_filter",
+        )
     with fc3:
-        search = st.text_input("Search intakes...", key="int_search", placeholder="Type to search across all fields")
+        search = render_search_bar("int_search", "Search intakes...")
 
-    display_df = df.copy() if not df.empty else df
+    display_df = df.copy()
     if not display_df.empty:
         if prog_filter != "All Programs" and "program_name" in display_df.columns:
             display_df = display_df[display_df["program_name"] == prog_filter]
@@ -584,260 +816,96 @@ def render_intakes_tab():
             display_df = display_df[display_df["status"] == status_filter]
         display_df = filter_dataframe(display_df, search)
 
-    # --- Data table with color-coded status ---
-    if not display_df.empty:
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "program_name": st.column_config.TextColumn("Program", width="large"),
-                "intake_date": st.column_config.TextColumn("Intake Date", width="small"),
-                "end_date": st.column_config.TextColumn("End Date", width="small"),
-                "campus": st.column_config.TextColumn("Campus", width="small"),
-                "hours": st.column_config.TextColumn("Hours", width="small"),
-                "weeks": st.column_config.TextColumn("Weeks", width="small"),
-                "spots_available": st.column_config.NumberColumn("Spots", width="small"),
-                "status": st.column_config.TextColumn("Status", width="small"),
-                "domestic_delivery_method": st.column_config.TextColumn("Dom. Delivery", width="small"),
-                "international_delivery_method": st.column_config.TextColumn("Intl. Delivery", width="small"),
-            },
-        )
-        st.caption(f"Showing {len(display_df)} of {total} intakes")
-    else:
-        st.info("No intakes found." if not search else "No intakes match your filters.")
+    display_df = display_df.copy()
+    display_df["delete"] = False
 
     if not programs:
         st.warning("Add programs first before managing intakes.")
-        return
 
-    st.divider()
+    edited_df = st.data_editor(
+        display_df,
+        column_config={
+            "program_name": st.column_config.SelectboxColumn(
+                "Program",
+                options=programs,
+                required=True,
+                width="large",
+            ),
+            "intake_date": st.column_config.TextColumn(
+                "Intake Date",
+                required=True,
+            ),
+            "end_date": st.column_config.TextColumn(
+                "End Date",
+                required=True,
+            ),
+            "campus": st.column_config.SelectboxColumn(
+                "Campus",
+                options=CAMPUS_OPTIONS,
+                required=True,
+            ),
+            "hours": st.column_config.TextColumn("Hours"),
+            "weeks": st.column_config.TextColumn("Weeks"),
+            "spots_available": st.column_config.NumberColumn(
+                "Spots",
+                min_value=0,
+                step=1,
+            ),
+            "status": st.column_config.SelectboxColumn(
+                "Status",
+                options=STATUS_OPTIONS,
+                required=True,
+            ),
+            "domestic_delivery_method": st.column_config.SelectboxColumn(
+                "Dom. Delivery",
+                options=DELIVERY_OPTIONS,
+            ),
+            "international_delivery_method": st.column_config.SelectboxColumn(
+                "Intl. Delivery",
+                options=DELIVERY_OPTIONS,
+            ),
+            "delete": st.column_config.CheckboxColumn(
+                "Delete",
+                default=False,
+                width="small",
+            ),
+        },
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True,
+        key="intakes_editor",
+    )
 
-    # --- Action buttons ---
-    init_session_key("int_mode", None)
+    if total > 0 or len(edited_df) > len(display_df):
+        st.caption(f"Showing {len(display_df)} of {total} intakes")
 
-    btn_cols = st.columns([1, 1, 1, 4])
-    with btn_cols[0]:
-        if st.button("Add New", key="int_add_btn", use_container_width=True):
-            st.session_state["int_mode"] = "add"
-    with btn_cols[1]:
-        if st.button("Edit", key="int_edit_btn", use_container_width=True, disabled=df.empty):
-            st.session_state["int_mode"] = "edit"
-    with btn_cols[2]:
-        if st.button("Delete", key="int_del_btn", use_container_width=True, disabled=df.empty, type="secondary"):
-            st.session_state["int_mode"] = "delete"
+    # Detect changes
+    changes = detect_changes(
+        original_df=display_df.drop(columns=["delete"], errors="ignore"),
+        edited_df=edited_df,
+        key_columns=["program_name", "intake_date", "campus"],
+        data_columns=expected_cols + ["delete"],
+    )
 
-    mode = st.session_state.get("int_mode")
+    st.markdown("")
+    confirmed = render_save_button(changes, "int_save")
 
-    # --- Add form ---
-    if mode == "add":
-        st.subheader("Add Intake")
-        with st.form("add_intake", clear_on_submit=True):
-            r1c1, r1c2 = st.columns(2)
-            with r1c1:
-                prog = st.selectbox("Program Name *", programs, key="add_int_prog")
-            with r1c2:
-                campus = st.selectbox("Campus *", CAMPUS_OPTIONS)
-
-            r2c1, r2c2, r2c3, r2c4 = st.columns(4)
-            with r2c1:
-                intake_dt = st.date_input("Intake Date *", key="add_int_dt")
-            with r2c2:
-                end_dt = st.date_input("End Date *", key="add_int_end")
-            with r2c3:
-                hours = st.text_input("Hours", placeholder="optional")
-            with r2c4:
-                weeks = st.text_input("Weeks", placeholder="optional")
-
-            r3c1, r3c2, r3c3 = st.columns(3)
-            with r3c1:
-                spots = st.number_input("Spots Available", min_value=0, value=0, step=1)
-            with r3c2:
-                dom_del = st.selectbox("Domestic Delivery *", DELIVERY_OPTIONS, key="add_int_dom")
-            with r3c3:
-                intl_del = st.selectbox("International Delivery *", DELIVERY_OPTIONS, key="add_int_intl")
-
-            r4c1, r4c2 = st.columns([1, 1])
-            with r4c1:
-                status = st.selectbox("Status *", STATUS_OPTIONS)
-
-            fc1, fc2 = st.columns([1, 6])
-            with fc1:
-                submitted = st.form_submit_button("Add Intake", type="primary")
-            with fc2:
-                cancel = st.form_submit_button("Cancel")
-
-        if cancel:
-            st.session_state["int_mode"] = None
-            st.rerun()
-        if submitted:
-            errors = _validate_intake(intake_dt, end_dt)
-            if errors:
-                for e in errors:
-                    st.error(e)
-            else:
-                row_vals = [
-                    prog,
-                    str(intake_dt),
-                    str(end_dt),
-                    campus,
-                    hours if hours else "",
-                    weeks if weeks else "",
-                    int(spots),
-                    status,
-                    dom_del,
-                    intl_del,
-                ]
-                append_row(SHEET_INTAKES, row_vals)
-                identifier = f"{prog}|{intake_dt}|{campus}"
-                field_dict = dict(zip(
-                    ["program_name", "intake_date", "end_date", "campus",
-                     "hours", "weeks", "spots_available", "status",
-                     "domestic_delivery_method", "international_delivery_method"],
-                    [str(v) for v in row_vals],
-                ))
-                log_create(SHEET_INTAKES, identifier, field_dict)
-                st.session_state["int_mode"] = None
-                st.toast("Intake added successfully!")
-                st.rerun()
-
-    # --- Edit form ---
-    if mode == "edit" and not df.empty:
-        st.subheader("Edit Intake")
-        df_edit = df.copy()
-        df_edit["_label"] = df_edit.apply(
-            lambda r: f"{r.get('program_name', '')} | {r.get('intake_date', '')} | {r.get('campus', '')}",
-            axis=1,
-        )
-        sel = st.selectbox("Select intake to edit", df_edit["_label"].tolist(), key="edit_int_sel")
-        sel_idx = df_edit[df_edit["_label"] == sel].index[0]
-        row_data = df_edit.iloc[sel_idx].to_dict()
-
-        with st.form("edit_intake"):
-            r1c1, r1c2, r1c3 = st.columns(3)
-            with r1c1:
-                new_campus = st.selectbox(
-                    "Campus",
-                    CAMPUS_OPTIONS,
-                    index=CAMPUS_OPTIONS.index(row_data["campus"])
-                    if row_data.get("campus") in CAMPUS_OPTIONS else 0,
-                )
-            with r1c2:
-                new_hours = st.text_input("Hours", value=str(row_data.get("hours", "")))
-            with r1c3:
-                new_weeks = st.text_input("Weeks", value=str(row_data.get("weeks", "")))
-
-            r2c1, r2c2, r2c3 = st.columns(3)
-            with r2c1:
-                new_spots = st.number_input(
-                    "Spots Available", min_value=0,
-                    value=safe_int(row_data.get("spots_available", 0)),
-                    step=1,
-                )
-            with r2c2:
-                new_status = st.selectbox(
-                    "Status",
-                    STATUS_OPTIONS,
-                    index=STATUS_OPTIONS.index(row_data["status"])
-                    if row_data.get("status") in STATUS_OPTIONS else 0,
-                )
-            with r2c3:
-                pass  # spacer
-
-            r3c1, r3c2 = st.columns(2)
-            with r3c1:
-                new_dom = st.selectbox(
-                    "Domestic Delivery Method",
-                    DELIVERY_OPTIONS,
-                    index=DELIVERY_OPTIONS.index(row_data["domestic_delivery_method"])
-                    if row_data.get("domestic_delivery_method") in DELIVERY_OPTIONS else 0,
-                    key="edit_int_dom",
-                )
-            with r3c2:
-                new_intl = st.selectbox(
-                    "International Delivery Method",
-                    DELIVERY_OPTIONS,
-                    index=DELIVERY_OPTIONS.index(row_data["international_delivery_method"])
-                    if row_data.get("international_delivery_method") in DELIVERY_OPTIONS else 0,
-                    key="edit_int_intl",
-                )
-
-            fc1, fc2 = st.columns([1, 6])
-            with fc1:
-                submitted = st.form_submit_button("Save Changes", type="primary")
-            with fc2:
-                cancel = st.form_submit_button("Cancel")
-
-        if cancel:
-            st.session_state["int_mode"] = None
-            st.rerun()
-        if submitted:
-            new_row = {
-                "program_name": row_data["program_name"],
-                "intake_date": row_data["intake_date"],
-                "end_date": row_data["end_date"],
-                "campus": new_campus,
-                "hours": new_hours,
-                "weeks": new_weeks,
-                "spots_available": int(new_spots),
-                "status": new_status,
-                "domestic_delivery_method": new_dom,
-                "international_delivery_method": new_intl,
-            }
-            match_dict = {
-                "program_name": row_data["program_name"],
-                "intake_date": str(row_data["intake_date"]),
-                "campus": str(row_data.get("campus", "")),
-            }
-            idx = find_row_index_multi(SHEET_INTAKES, match_dict)
-            if idx:
-                update_row(SHEET_INTAKES, idx, [str(v) for v in new_row.values()])
-                identifier = f"{row_data['program_name']}|{row_data['intake_date']}|{row_data.get('campus', '')}"
-                log_update(SHEET_INTAKES, identifier, row_data, new_row)
-                st.session_state["int_mode"] = None
-                st.toast("Intake updated successfully!")
-                st.rerun()
-
-    # --- Delete with confirmation ---
-    if mode == "delete" and not df.empty:
-        st.subheader("Delete Intake")
-        df_del = df.copy()
-        if "_label" not in df_del.columns:
-            df_del["_label"] = df_del.apply(
-                lambda r: f"{r.get('program_name', '')} | {r.get('intake_date', '')} | {r.get('campus', '')}",
-                axis=1,
+    if confirmed:
+        with st.spinner("Saving changes to Google Sheets..."):
+            ok, errs = apply_changes(
+                SHEET_INTAKES,
+                changes,
+                key_columns=["program_name", "intake_date", "campus"],
+                data_columns=expected_cols + ["delete"],
+                original_df=display_df.drop(columns=["delete"], errors="ignore"),
             )
-        sel_del = st.selectbox("Select intake to delete", df_del["_label"].tolist(), key="del_int_sel")
-        sel_idx = df_del[df_del["_label"] == sel_del].index[0]
-        row_data = df_del.iloc[sel_idx].to_dict()
-
-        st.warning(
-            f"You are about to delete intake: **{row_data.get('program_name', '')}** "
-            f"({row_data.get('intake_date', '')} - {row_data.get('end_date', '')}), "
-            f"Campus: {row_data.get('campus', '')}, Status: {row_data.get('status', '')}"
-        )
-        st.caption("This action cannot be undone.")
-        dc1, dc2, dc3 = st.columns([1, 1, 5])
-        with dc1:
-            if st.button("Confirm Delete", type="primary", key="int_confirm_del"):
-                match_dict = {
-                    "program_name": row_data["program_name"],
-                    "intake_date": str(row_data["intake_date"]),
-                    "campus": str(row_data.get("campus", "")),
-                }
-                idx = find_row_index_multi(SHEET_INTAKES, match_dict)
-                if idx:
-                    old = {k: v for k, v in row_data.items() if k != "_label"}
-                    delete_row(SHEET_INTAKES, idx)
-                    identifier = f"{row_data['program_name']}|{row_data['intake_date']}|{row_data.get('campus', '')}"
-                    log_delete(SHEET_INTAKES, identifier, old)
-                    st.session_state["int_mode"] = None
-                    st.toast("Intake deleted.")
-                    st.rerun()
-        with dc2:
-            if st.button("Cancel", key="int_cancel_del"):
-                st.session_state["int_mode"] = None
-                st.rerun()
+        if errs:
+            for e in errs:
+                st.error(e)
+        if ok > 0:
+            st.success(f"Saved {ok} change{'s' if ok != 1 else ''} successfully.")
+            st.cache_resource.clear()
+            st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -849,269 +917,160 @@ def render_fees_tab():
     df = read_sheet(SHEET_FEES)
     programs = get_program_names()
 
-    # --- Summary metrics ---
-    total = len(df) if not df.empty else 0
-    total_domestic = 0.0
-    total_intl = 0.0
-    unique_programs = 0
+    expected_cols = [
+        "program_name", "effective_from", "fee_name",
+        "domestic_amount", "international_amount", "is_tuition", "sort_order",
+    ]
+    if df.empty:
+        df = pd.DataFrame(columns=expected_cols)
+    else:
+        df = ensure_columns(df, expected_cols)
+
+    # Cast numeric and boolean columns
     if not df.empty:
-        if "domestic_amount" in df.columns:
-            total_domestic = safe_float(df["domestic_amount"].apply(safe_float).sum())
-        if "international_amount" in df.columns:
-            total_intl = safe_float(df["international_amount"].apply(safe_float).sum())
-        if "program_name" in df.columns:
-            unique_programs = df["program_name"].nunique()
+        df["domestic_amount"] = df["domestic_amount"].apply(lambda x: safe_float(x, 0.0))
+        df["international_amount"] = df["international_amount"].apply(lambda x: safe_float(x, 0.0))
+        df["sort_order"] = df["sort_order"].apply(lambda x: safe_int(x, 1))
+        df["is_tuition"] = df["is_tuition"].apply(
+            lambda x: str(x).strip().upper() == "TRUE"
+        )
 
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total Fee Rows", total)
-    m2.metric("Programs with Fees", unique_programs)
-    m3.metric("Dom. Total", f"${total_domestic:,.2f}")
-    m4.metric("Intl. Total", f"${total_intl:,.2f}")
+    # Metrics
+    total = len(df)
+    total_domestic = df["domestic_amount"].sum() if not df.empty else 0.0
+    total_intl = df["international_amount"].sum() if not df.empty else 0.0
 
-    st.divider()
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        render_metric_card("Total Fee Items", total)
+    with m2:
+        render_metric_card("Domestic Total", f"${total_domestic:,.2f}")
+    with m3:
+        render_metric_card("International Total", f"${total_intl:,.2f}")
 
-    # --- Filters ---
-    fc1, fc2 = st.columns([1, 2])
+    st.markdown("---")
+
+    # Filter
+    fc1, fc2 = st.columns([2, 3])
     with fc1:
-        prog_filter = st.selectbox("Filter by Program", ["All Programs"] + programs, key="fee_prog_filter")
+        prog_filter = st.selectbox(
+            "Filter by Program",
+            ["All Programs"] + programs,
+            key="fee_prog_filter",
+        )
     with fc2:
-        search = st.text_input("Search fees...", key="fee_search", placeholder="Type to search across all fields")
+        search = render_search_bar("fee_search", "Search fees...")
 
-    display_df = df.copy() if not df.empty else df
+    display_df = df.copy()
     if not display_df.empty:
         if prog_filter != "All Programs" and "program_name" in display_df.columns:
             display_df = display_df[display_df["program_name"] == prog_filter]
         display_df = filter_dataframe(display_df, search)
 
-    # --- Data table with currency formatting ---
-    if not display_df.empty:
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "program_name": st.column_config.TextColumn("Program", width="large"),
-                "effective_from": st.column_config.TextColumn("Effective From", width="small"),
-                "fee_name": st.column_config.TextColumn("Fee Name", width="medium"),
-                "domestic_amount": st.column_config.NumberColumn(
-                    "Domestic ($)", format="$%.2f", width="small",
-                ),
-                "international_amount": st.column_config.NumberColumn(
-                    "International ($)", format="$%.2f", width="small",
-                ),
-                "is_tuition": st.column_config.TextColumn("Tuition?", width="small"),
-                "sort_order": st.column_config.NumberColumn("Sort", width="small"),
-            },
-        )
-        st.caption(f"Showing {len(display_df)} of {total} fee rows")
-
-        # Show per-program totals when filtering to a single program
-        if prog_filter != "All Programs":
-            st.divider()
-            dom_total = display_df["domestic_amount"].apply(safe_float).sum() if "domestic_amount" in display_df.columns else 0
-            intl_total = display_df["international_amount"].apply(safe_float).sum() if "international_amount" in display_df.columns else 0
-            tc1, tc2 = st.columns(2)
-            tc1.metric(f"{prog_filter} - Domestic Total", f"${dom_total:,.2f}")
-            tc2.metric(f"{prog_filter} - International Total", f"${intl_total:,.2f}")
-    else:
-        st.info("No fees found." if not search else "No fees match your filters.")
+    display_df = display_df.copy()
+    display_df["delete"] = False
 
     if not programs:
         st.warning("Add programs first before managing fees.")
-        return
 
-    st.divider()
+    edited_df = st.data_editor(
+        display_df,
+        column_config={
+            "program_name": st.column_config.SelectboxColumn(
+                "Program",
+                options=programs,
+                required=True,
+                width="large",
+            ),
+            "effective_from": st.column_config.TextColumn(
+                "Effective From",
+                required=True,
+            ),
+            "fee_name": st.column_config.SelectboxColumn(
+                "Fee Name",
+                options=FEE_NAME_OPTIONS,
+                required=True,
+            ),
+            "domestic_amount": st.column_config.NumberColumn(
+                "Domestic $",
+                format="$%.2f",
+                min_value=0.0,
+                step=0.01,
+            ),
+            "international_amount": st.column_config.NumberColumn(
+                "International $",
+                format="$%.2f",
+                min_value=0.0,
+                step=0.01,
+            ),
+            "is_tuition": st.column_config.CheckboxColumn(
+                "Tuition?",
+                default=False,
+            ),
+            "sort_order": st.column_config.NumberColumn(
+                "Sort",
+                min_value=1,
+                step=1,
+            ),
+            "delete": st.column_config.CheckboxColumn(
+                "Delete",
+                default=False,
+                width="small",
+            ),
+        },
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True,
+        key="fees_editor",
+    )
 
-    # --- Action buttons ---
-    init_session_key("fee_mode", None)
+    if total > 0 or len(edited_df) > len(display_df):
+        st.caption(f"Showing {len(display_df)} of {total} fee rows")
 
-    btn_cols = st.columns([1, 1, 1, 4])
-    with btn_cols[0]:
-        if st.button("Add New", key="fee_add_btn", use_container_width=True):
-            st.session_state["fee_mode"] = "add"
-    with btn_cols[1]:
-        if st.button("Edit", key="fee_edit_btn", use_container_width=True, disabled=df.empty):
-            st.session_state["fee_mode"] = "edit"
-    with btn_cols[2]:
-        if st.button("Delete", key="fee_del_btn", use_container_width=True, disabled=df.empty, type="secondary"):
-            st.session_state["fee_mode"] = "delete"
+    # Per-program totals when filtered
+    if prog_filter != "All Programs" and not display_df.empty:
+        dom_total = display_df["domestic_amount"].sum()
+        intl_total = display_df["international_amount"].sum()
+        tc1, tc2 = st.columns(2)
+        with tc1:
+            render_metric_card(f"{prog_filter} Domestic", f"${dom_total:,.2f}")
+        with tc2:
+            render_metric_card(f"{prog_filter} International", f"${intl_total:,.2f}")
 
-    mode = st.session_state.get("fee_mode")
+    # Detect changes — need to handle is_tuition conversion for sheets
+    changes = detect_changes(
+        original_df=display_df.drop(columns=["delete"], errors="ignore"),
+        edited_df=edited_df,
+        key_columns=["program_name", "fee_name", "sort_order"],
+        data_columns=expected_cols + ["delete"],
+    )
 
-    # --- Add form ---
-    if mode == "add":
-        st.subheader("Add Fee")
-        with st.form("add_fee", clear_on_submit=True):
-            r1c1, r1c2, r1c3 = st.columns(3)
-            with r1c1:
-                prog = st.selectbox("Program Name *", programs, key="add_fee_prog")
-            with r1c2:
-                eff_date = st.date_input("Effective From *", key="add_fee_eff")
-            with r1c3:
-                fee_name = st.selectbox("Fee Name *", FEE_NAME_OPTIONS, key="add_fee_name")
+    st.markdown("")
+    confirmed = render_save_button(changes, "fee_save")
 
-            r2c1, r2c2, r2c3, r2c4 = st.columns(4)
-            with r2c1:
-                dom_amt = st.number_input("Domestic Amount ($) *", min_value=0.0, step=0.01, key="add_fee_dom")
-            with r2c2:
-                intl_amt = st.number_input("International Amount ($) *", min_value=0.0, step=0.01, key="add_fee_intl")
-            with r2c3:
-                is_tuition = st.checkbox("Is Tuition?", key="add_fee_tuit")
-            with r2c4:
-                sort_order = st.number_input("Sort Order *", min_value=1, value=1, step=1, key="add_fee_sort")
+    if confirmed:
+        # Convert is_tuition back to string for Google Sheets
+        for rec in changes["added"]:
+            rec["is_tuition"] = str(rec.get("is_tuition", False)).upper()
+        for change in changes["edited"]:
+            if change["col"] == "is_tuition":
+                change["new"] = str(change["new"]).upper()
 
-            fc1, fc2 = st.columns([1, 6])
-            with fc1:
-                submitted = st.form_submit_button("Add Fee", type="primary")
-            with fc2:
-                cancel = st.form_submit_button("Cancel")
-
-        if cancel:
-            st.session_state["fee_mode"] = None
-            st.rerun()
-        if submitted:
-            row_vals = [
-                prog,
-                str(eff_date),
-                fee_name,
-                float(dom_amt),
-                float(intl_amt),
-                str(is_tuition).upper(),
-                int(sort_order),
-            ]
-            append_row(SHEET_FEES, row_vals)
-            identifier = f"{prog}|{eff_date}|{fee_name}"
-            field_dict = dict(zip(
-                ["program_name", "effective_from", "fee_name",
-                 "domestic_amount", "international_amount", "is_tuition", "sort_order"],
-                [str(v) for v in row_vals],
-            ))
-            log_create(SHEET_FEES, identifier, field_dict)
-            st.session_state["fee_mode"] = None
-            st.toast("Fee added successfully!")
-            st.rerun()
-
-    # --- Edit form ---
-    if mode == "edit" and not df.empty:
-        st.subheader("Edit Fee")
-        df_edit = df.copy()
-        df_edit["_label"] = df_edit.apply(
-            lambda r: f"{r.get('program_name', '')} | {r.get('fee_name', '')} | sort:{r.get('sort_order', '')}",
-            axis=1,
-        )
-        sel = st.selectbox("Select fee to edit", df_edit["_label"].tolist(), key="edit_fee_sel")
-        sel_idx = df_edit[df_edit["_label"] == sel].index[0]
-        row_data = df_edit.iloc[sel_idx].to_dict()
-
-        with st.form("edit_fee"):
-            r1c1, r1c2 = st.columns(2)
-            with r1c1:
-                new_fee_name = st.selectbox(
-                    "Fee Name",
-                    FEE_NAME_OPTIONS,
-                    index=FEE_NAME_OPTIONS.index(row_data["fee_name"])
-                    if row_data.get("fee_name") in FEE_NAME_OPTIONS else 0,
-                )
-            with r1c2:
-                new_sort = st.number_input(
-                    "Sort Order", min_value=1,
-                    value=safe_int(row_data.get("sort_order", 1), 1),
-                    step=1, key="edit_fee_sort",
-                )
-
-            r2c1, r2c2, r2c3 = st.columns(3)
-            with r2c1:
-                new_dom = st.number_input(
-                    "Domestic Amount ($)", min_value=0.0,
-                    value=safe_float(row_data.get("domestic_amount", 0)),
-                    step=0.01, key="edit_fee_dom",
-                )
-            with r2c2:
-                new_intl = st.number_input(
-                    "International Amount ($)", min_value=0.0,
-                    value=safe_float(row_data.get("international_amount", 0)),
-                    step=0.01, key="edit_fee_intl",
-                )
-            with r2c3:
-                is_tuit_val = str(row_data.get("is_tuition", "FALSE")).upper() == "TRUE"
-                new_is_tuition = st.checkbox("Is Tuition?", value=is_tuit_val, key="edit_fee_tuit")
-
-            fc1, fc2 = st.columns([1, 6])
-            with fc1:
-                submitted = st.form_submit_button("Save Changes", type="primary")
-            with fc2:
-                cancel = st.form_submit_button("Cancel")
-
-        if cancel:
-            st.session_state["fee_mode"] = None
-            st.rerun()
-        if submitted:
-            new_row = {
-                "program_name": row_data["program_name"],
-                "effective_from": row_data["effective_from"],
-                "fee_name": new_fee_name,
-                "domestic_amount": float(new_dom),
-                "international_amount": float(new_intl),
-                "is_tuition": str(new_is_tuition).upper(),
-                "sort_order": int(new_sort),
-            }
-            match_dict = {
-                "program_name": str(row_data["program_name"]),
-                "effective_from": str(row_data["effective_from"]),
-                "fee_name": str(row_data["fee_name"]),
-                "sort_order": str(row_data["sort_order"]),
-            }
-            idx = find_row_index_multi(SHEET_FEES, match_dict)
-            if idx:
-                update_row(SHEET_FEES, idx, [str(v) for v in new_row.values()])
-                identifier = f"{row_data['program_name']}|{row_data['effective_from']}|{row_data['fee_name']}"
-                log_update(SHEET_FEES, identifier, row_data, new_row)
-                st.session_state["fee_mode"] = None
-                st.toast("Fee updated successfully!")
-                st.rerun()
-
-    # --- Delete with confirmation ---
-    if mode == "delete" and not df.empty:
-        st.subheader("Delete Fee")
-        df_del = df.copy()
-        if "_label" not in df_del.columns:
-            df_del["_label"] = df_del.apply(
-                lambda r: f"{r.get('program_name', '')} | {r.get('fee_name', '')} | sort:{r.get('sort_order', '')}",
-                axis=1,
+        with st.spinner("Saving changes to Google Sheets..."):
+            ok, errs = apply_changes(
+                SHEET_FEES,
+                changes,
+                key_columns=["program_name", "fee_name", "sort_order"],
+                data_columns=expected_cols + ["delete"],
+                original_df=display_df.drop(columns=["delete"], errors="ignore"),
             )
-        sel_del = st.selectbox("Select fee to delete", df_del["_label"].tolist(), key="del_fee_sel")
-        sel_idx = df_del[df_del["_label"] == sel_del].index[0]
-        row_data = df_del.iloc[sel_idx].to_dict()
-
-        st.warning(
-            f"You are about to delete fee: **{row_data.get('fee_name', '')}** for "
-            f"{row_data.get('program_name', '')} "
-            f"(Dom: ${safe_float(row_data.get('domestic_amount', 0)):,.2f} / "
-            f"Intl: ${safe_float(row_data.get('international_amount', 0)):,.2f})"
-        )
-        st.caption("This action cannot be undone.")
-        dc1, dc2, dc3 = st.columns([1, 1, 5])
-        with dc1:
-            if st.button("Confirm Delete", type="primary", key="fee_confirm_del"):
-                match_dict = {
-                    "program_name": str(row_data["program_name"]),
-                    "effective_from": str(row_data["effective_from"]),
-                    "fee_name": str(row_data["fee_name"]),
-                    "sort_order": str(row_data["sort_order"]),
-                }
-                idx = find_row_index_multi(SHEET_FEES, match_dict)
-                if idx:
-                    old = {k: v for k, v in row_data.items() if k != "_label"}
-                    delete_row(SHEET_FEES, idx)
-                    identifier = f"{row_data['program_name']}|{row_data['effective_from']}|{row_data['fee_name']}"
-                    log_delete(SHEET_FEES, identifier, old)
-                    st.session_state["fee_mode"] = None
-                    st.toast("Fee deleted.")
-                    st.rerun()
-        with dc2:
-            if st.button("Cancel", key="fee_cancel_del"):
-                st.session_state["fee_mode"] = None
-                st.rerun()
+        if errs:
+            for e in errs:
+                st.error(e)
+        if ok > 0:
+            st.success(f"Saved {ok} change{'s' if ok != 1 else ''} successfully.")
+            st.cache_resource.clear()
+            st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -1123,54 +1082,100 @@ def render_outline_map_tab():
     df = read_sheet(SHEET_OUTLINE_MAP)
     programs = get_program_names()
 
-    # --- Summary metrics ---
-    total_mappings = len(df) if not df.empty else 0
+    expected_cols = ["program_name", "outline_filename", "google_drive_file_id"]
+    if df.empty:
+        df = pd.DataFrame(columns=expected_cols)
+    else:
+        df = ensure_columns(df, expected_cols)
+
+    # Metrics
+    total_mappings = len(df)
     total_programs = len(programs)
     has_outline = 0
-    missing_outline = 0
     if not df.empty and "google_drive_file_id" in df.columns:
-        has_outline = df["google_drive_file_id"].apply(lambda x: bool(str(x).strip())).sum()
-        missing_outline = total_mappings - has_outline
-    programs_without_mapping = total_programs - total_mappings
+        has_outline = df["google_drive_file_id"].apply(
+            lambda x: bool(str(x).strip())
+        ).sum()
+    missing_outline = total_mappings - has_outline
+    programs_without = max(0, total_programs - total_mappings)
 
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total Mappings", total_mappings)
-    m2.metric("With Drive Link", has_outline)
-    m3.metric("Missing Drive Link", missing_outline)
-    m4.metric("Programs Without Mapping", max(0, programs_without_mapping))
+    with m1:
+        render_metric_card("Total Mapped", total_mappings)
+    with m2:
+        render_metric_card("With Drive Link", has_outline)
+    with m3:
+        render_metric_card("Missing Link", missing_outline)
+    with m4:
+        render_metric_card("Unmapped Programs", programs_without)
 
-    st.divider()
+    st.markdown("---")
 
-    # --- Search ---
-    search = st.text_input("Search outline mappings...", key="outline_search", placeholder="Type to filter")
+    # Search
+    search_col, _ = st.columns([2, 3])
+    with search_col:
+        search = render_search_bar("outline_search", "Search outline mappings...")
+
     display_df = filter_dataframe(df, search) if not df.empty else df
+    display_df = display_df.copy()
 
-    # --- Data table with preview links ---
-    if not display_df.empty:
-        view_df = display_df.copy()
-        if "google_drive_file_id" in view_df.columns:
-            view_df["preview_link"] = view_df["google_drive_file_id"].apply(
-                lambda fid: f"https://drive.google.com/file/d/{fid}/view" if str(fid).strip() else ""
-            )
-        st.dataframe(
-            view_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "program_name": st.column_config.TextColumn("Program", width="large"),
-                "outline_filename": st.column_config.TextColumn("Filename", width="medium"),
-                "google_drive_file_id": st.column_config.TextColumn("Drive File ID", width="medium"),
-                "preview_link": st.column_config.LinkColumn("Preview", display_text="Open", width="small"),
-            },
+    # Add preview link column for display
+    if "google_drive_file_id" in display_df.columns:
+        display_df["preview_link"] = display_df["google_drive_file_id"].apply(
+            lambda fid: f"https://drive.google.com/file/d/{fid}/view"
+            if str(fid).strip() else ""
         )
-        st.caption(f"Showing {len(display_df)} of {total_mappings} mappings")
     else:
-        st.info("No outline mappings found." if not search else "No mappings match your search.")
+        display_df["preview_link"] = ""
 
-    # Show programs missing outlines
-    if not df.empty and programs:
-        mapped_programs = set(df["program_name"].tolist()) if "program_name" in df.columns else set()
-        missing = sorted(set(programs) - mapped_programs)
+    display_df["delete"] = False
+
+    edited_df = st.data_editor(
+        display_df,
+        column_config={
+            "program_name": st.column_config.SelectboxColumn(
+                "Program",
+                options=programs,
+                required=True,
+                width="large",
+            ),
+            "outline_filename": st.column_config.TextColumn(
+                "Outline Filename",
+                width="medium",
+            ),
+            "google_drive_file_id": st.column_config.TextColumn(
+                "Drive File ID",
+                width="medium",
+            ),
+            "preview_link": st.column_config.LinkColumn(
+                "Preview",
+                display_text="Open",
+                width="small",
+                disabled=True,
+            ),
+            "delete": st.column_config.CheckboxColumn(
+                "Delete",
+                default=False,
+                width="small",
+            ),
+        },
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True,
+        key="outline_editor",
+        column_order=[
+            "program_name", "outline_filename",
+            "google_drive_file_id", "preview_link", "delete",
+        ],
+    )
+
+    if total_mappings > 0:
+        st.caption(f"Showing {len(display_df)} of {total_mappings} mappings")
+
+    # Programs missing outlines
+    if programs:
+        mapped = set(df["program_name"].tolist()) if not df.empty and "program_name" in df.columns else set()
+        missing = sorted(set(programs) - mapped)
         if missing:
             with st.expander(f"Programs missing outline mapping ({len(missing)})"):
                 for prog_name in missing:
@@ -1178,135 +1183,40 @@ def render_outline_map_tab():
 
     if not programs:
         st.warning("Add programs first before managing outline mappings.")
-        return
 
-    st.divider()
+    # Detect changes (exclude preview_link from comparison)
+    changes = detect_changes(
+        original_df=display_df.drop(columns=["delete", "preview_link"], errors="ignore"),
+        edited_df=edited_df.drop(columns=["preview_link"], errors="ignore"),
+        key_columns=["program_name"],
+        data_columns=expected_cols + ["delete"],
+    )
 
-    # --- Action buttons ---
-    init_session_key("outline_mode", None)
+    st.markdown("")
+    confirmed = render_save_button(changes, "outline_save")
 
-    btn_cols = st.columns([1, 1, 1, 4])
-    with btn_cols[0]:
-        if st.button("Add New", key="outline_add_btn", use_container_width=True):
-            st.session_state["outline_mode"] = "add"
-    with btn_cols[1]:
-        if st.button("Edit", key="outline_edit_btn", use_container_width=True, disabled=df.empty):
-            st.session_state["outline_mode"] = "edit"
-    with btn_cols[2]:
-        if st.button("Delete", key="outline_del_btn", use_container_width=True, disabled=df.empty, type="secondary"):
-            st.session_state["outline_mode"] = "delete"
-
-    mode = st.session_state.get("outline_mode")
-
-    # --- Add form ---
-    if mode == "add":
-        st.subheader("Add Outline Mapping")
-        with st.form("add_outline", clear_on_submit=True):
-            r1c1, r1c2, r1c3 = st.columns(3)
-            with r1c1:
-                prog = st.selectbox("Program Name *", programs, key="add_outline_prog")
-            with r1c2:
-                filename = st.text_input("Outline Filename")
-            with r1c3:
-                drive_id = st.text_input("Google Drive File ID")
-            st.caption("Paste the file ID from the Google Drive sharing URL.")
-
-            fc1, fc2 = st.columns([1, 6])
-            with fc1:
-                submitted = st.form_submit_button("Add Mapping", type="primary")
-            with fc2:
-                cancel = st.form_submit_button("Cancel")
-
-        if cancel:
-            st.session_state["outline_mode"] = None
+    if confirmed:
+        with st.spinner("Saving changes to Google Sheets..."):
+            ok, errs = apply_changes(
+                SHEET_OUTLINE_MAP,
+                changes,
+                key_columns=["program_name"],
+                data_columns=expected_cols + ["delete"],
+                original_df=display_df.drop(
+                    columns=["delete", "preview_link"], errors="ignore"
+                ),
+            )
+        if errs:
+            for e in errs:
+                st.error(e)
+        if ok > 0:
+            st.success(f"Saved {ok} change{'s' if ok != 1 else ''} successfully.")
+            st.cache_resource.clear()
             st.rerun()
-        if submitted:
-            if not prog:
-                st.error("Program Name is required.")
-            else:
-                row_vals = [prog, filename.strip(), drive_id.strip()]
-                append_row(SHEET_OUTLINE_MAP, row_vals)
-                log_create(SHEET_OUTLINE_MAP, prog, {
-                    "program_name": prog,
-                    "outline_filename": filename.strip(),
-                    "google_drive_file_id": drive_id.strip(),
-                })
-                st.session_state["outline_mode"] = None
-                st.toast("Outline mapping added!")
-                st.rerun()
-
-    # --- Edit form ---
-    if mode == "edit" and not df.empty:
-        st.subheader("Edit Outline Mapping")
-        sel = st.selectbox(
-            "Select mapping to edit",
-            df["program_name"].tolist(),
-            key="edit_outline_sel",
-        )
-        row_data = df[df["program_name"] == sel].iloc[0].to_dict()
-
-        with st.form("edit_outline"):
-            r1c1, r1c2 = st.columns(2)
-            with r1c1:
-                new_fn = st.text_input("Outline Filename", value=str(row_data.get("outline_filename", "")))
-            with r1c2:
-                new_id = st.text_input("Google Drive File ID", value=str(row_data.get("google_drive_file_id", "")))
-
-            fc1, fc2 = st.columns([1, 6])
-            with fc1:
-                submitted = st.form_submit_button("Save Changes", type="primary")
-            with fc2:
-                cancel = st.form_submit_button("Cancel")
-
-        if cancel:
-            st.session_state["outline_mode"] = None
-            st.rerun()
-        if submitted:
-            new_row = {
-                "program_name": sel,
-                "outline_filename": new_fn.strip(),
-                "google_drive_file_id": new_id.strip(),
-            }
-            idx = find_row_index(SHEET_OUTLINE_MAP, "program_name", sel)
-            if idx:
-                update_row(SHEET_OUTLINE_MAP, idx, list(new_row.values()))
-                log_update(SHEET_OUTLINE_MAP, sel, row_data, new_row)
-                st.session_state["outline_mode"] = None
-                st.toast("Outline mapping updated!")
-                st.rerun()
-
-    # --- Delete with confirmation ---
-    if mode == "delete" and not df.empty:
-        st.subheader("Delete Outline Mapping")
-        sel_del = st.selectbox(
-            "Select mapping to delete",
-            df["program_name"].tolist(),
-            key="del_outline_sel",
-        )
-        old = df[df["program_name"] == sel_del].iloc[0].to_dict()
-        st.warning(
-            f"You are about to delete the outline mapping for **{sel_del}** "
-            f"(File: {old.get('outline_filename', 'N/A')})"
-        )
-        st.caption("This action cannot be undone.")
-        dc1, dc2, dc3 = st.columns([1, 1, 5])
-        with dc1:
-            if st.button("Confirm Delete", type="primary", key="outline_confirm_del"):
-                idx = find_row_index(SHEET_OUTLINE_MAP, "program_name", sel_del)
-                if idx:
-                    delete_row(SHEET_OUTLINE_MAP, idx)
-                    log_delete(SHEET_OUTLINE_MAP, sel_del, old)
-                    st.session_state["outline_mode"] = None
-                    st.toast("Outline mapping deleted.")
-                    st.rerun()
-        with dc2:
-            if st.button("Cancel", key="outline_cancel_del"):
-                st.session_state["outline_mode"] = None
-                st.rerun()
 
 
 # ---------------------------------------------------------------------------
-# Tab: Audit Log
+# Tab: Audit Log (read-only)
 # ---------------------------------------------------------------------------
 
 
@@ -1318,36 +1228,50 @@ def render_audit_log_tab():
         st.info("No audit records yet.")
         return
 
-    # --- Summary metrics ---
-    m1, m2, m3, m4 = st.columns(4)
+    # Metrics
     total = len(df)
     action_counts = df["action"].value_counts().to_dict() if "action" in df.columns else {}
-    m1.metric("Total Records", total)
-    m2.metric("Creates", action_counts.get("CREATE", 0))
-    m3.metric("Updates", action_counts.get("UPDATE", 0))
-    m4.metric("Deletes", action_counts.get("DELETE", 0))
 
-    st.divider()
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        render_metric_card("Total Records", total)
+    with m2:
+        render_metric_card("Creates", action_counts.get("CREATE", 0))
+    with m3:
+        render_metric_card("Updates", action_counts.get("UPDATE", 0))
+    with m4:
+        render_metric_card("Deletes", action_counts.get("DELETE", 0))
 
-    # --- Filters ---
+    st.markdown("---")
+
+    # Filters
     col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
     with col1:
         tab_filter = st.multiselect(
             "Filter by Tab",
-            options=sorted(df["tab_name"].dropna().unique().tolist()) if "tab_name" in df.columns else [],
+            options=sorted(df["tab_name"].dropna().unique().tolist())
+            if "tab_name" in df.columns else [],
         )
     with col2:
         action_filter = st.multiselect(
             "Filter by Action",
-            options=sorted(df["action"].dropna().unique().tolist()) if "action" in df.columns else [],
+            options=sorted(df["action"].dropna().unique().tolist())
+            if "action" in df.columns else [],
         )
     with col3:
         if "timestamp" in df.columns and not df["timestamp"].empty:
-            date_range = st.date_input("Date range", value=[], key="audit_date_range")
+            date_range = st.date_input(
+                "Date range",
+                value=[],
+                key="audit_date_range",
+            )
         else:
             date_range = []
     with col4:
-        search = st.text_input("Search audit log...", key="audit_search", placeholder="Search by identifier, field, value...")
+        search = render_search_bar(
+            "audit_search",
+            "Search by identifier, field, value...",
+        )
 
     filtered = df.copy()
     if tab_filter:
@@ -1363,15 +1287,29 @@ def render_audit_log_tab():
         filtered = filtered.drop(columns=["_ts"])
     filtered = filter_dataframe(filtered, search)
 
-    # Reverse chronological order
+    # Reverse chronological
     filtered = filtered.iloc[::-1].reset_index(drop=True)
 
-    st.dataframe(filtered, use_container_width=True, hide_index=True)
-    st.caption(f"Showing {len(filtered)} of {len(df)} records (newest first).")
+    st.dataframe(
+        filtered,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "timestamp": st.column_config.TextColumn("Timestamp", width="medium"),
+            "user": st.column_config.TextColumn("User", width="small"),
+            "action": st.column_config.TextColumn("Action", width="small"),
+            "tab_name": st.column_config.TextColumn("Tab", width="small"),
+            "row_identifier": st.column_config.TextColumn("Row ID", width="medium"),
+            "field_name": st.column_config.TextColumn("Field", width="medium"),
+            "old_value": st.column_config.TextColumn("Old Value", width="medium"),
+            "new_value": st.column_config.TextColumn("New Value", width="medium"),
+        },
+    )
+    st.caption(f"Showing {len(filtered)} of {total} records (newest first).")
 
 
 # ---------------------------------------------------------------------------
-# Tab: Contract Log
+# Tab: Contract Log (read-only)
 # ---------------------------------------------------------------------------
 
 
@@ -1383,19 +1321,30 @@ def render_contract_log_tab():
         st.info("No contracts generated yet.")
         return
 
-    # --- Summary metrics ---
-    m1, m2, m3, m4 = st.columns(4)
+    # Metrics
     total = len(df)
     status_counts = df["status"].value_counts().to_dict() if "status" in df.columns else {}
     prog_count = df["program_name"].nunique() if "program_name" in df.columns else 0
-    m1.metric("Total Contracts", total)
-    m2.metric("Programs", prog_count)
-    m3.metric("Completed", status_counts.get("completed", 0) + status_counts.get("Completed", 0))
-    m4.metric("Pending", status_counts.get("pending", 0) + status_counts.get("Pending", 0))
 
-    st.divider()
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        render_metric_card("Total Contracts", total)
+    with m2:
+        render_metric_card("Programs", prog_count)
+    with m3:
+        completed = (
+            status_counts.get("completed", 0) + status_counts.get("Completed", 0)
+        )
+        render_metric_card("Completed", completed)
+    with m4:
+        pending = (
+            status_counts.get("pending", 0) + status_counts.get("Pending", 0)
+        )
+        render_metric_card("Pending", pending)
 
-    # --- Filters ---
+    st.markdown("---")
+
+    # Filters
     col1, col2, col3 = st.columns([1, 1, 2])
     with col1:
         if "program_name" in df.columns:
@@ -1414,7 +1363,10 @@ def render_contract_log_tab():
         else:
             status_filter = []
     with col3:
-        search = st.text_input("Search contracts...", key="contract_search", placeholder="Search by student name, program, status...")
+        search = render_search_bar(
+            "contract_search",
+            "Search by student name, program, status...",
+        )
 
     filtered = df.copy()
     if prog_filter:
@@ -1423,11 +1375,11 @@ def render_contract_log_tab():
         filtered = filtered[filtered["status"].isin(status_filter)]
     filtered = filter_dataframe(filtered, search)
 
-    # Reverse chronological order
+    # Reverse chronological
     filtered = filtered.iloc[::-1].reset_index(drop=True)
 
     st.dataframe(filtered, use_container_width=True, hide_index=True)
-    st.caption(f"Showing {len(filtered)} of {len(df)} records (newest first).")
+    st.caption(f"Showing {len(filtered)} of {total} records (newest first).")
 
 
 # ---------------------------------------------------------------------------
@@ -1438,42 +1390,178 @@ def render_contract_log_tab():
 def main():
     st.set_page_config(
         page_title="WCC Contract Admin",
-        page_icon="🎓",
+        page_icon=":clipboard:",
         layout="wide",
+        initial_sidebar_state="expanded",
     )
+
+    # Custom CSS for data-dense dashboard
+    st.markdown("""
+    <style>
+        /* Page background */
+        .stApp { background-color: #F8FAFC; }
+
+        /* Sidebar styling */
+        [data-testid="stSidebar"] {
+            background-color: #1E293B;
+        }
+        [data-testid="stSidebar"] .stMarkdown,
+        [data-testid="stSidebar"] .stMarkdown p,
+        [data-testid="stSidebar"] label,
+        [data-testid="stSidebar"] .stRadio label {
+            color: #F8FAFC !important;
+        }
+        [data-testid="stSidebar"] .stRadio > div[role="radiogroup"] > label {
+            color: #CBD5E1 !important;
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-bottom: 2px;
+            transition: background-color 0.15s ease;
+        }
+        [data-testid="stSidebar"] .stRadio > div[role="radiogroup"] > label:hover {
+            background-color: #334155;
+            color: #F8FAFC !important;
+        }
+        [data-testid="stSidebar"] .stRadio > div[role="radiogroup"] > label[data-checked="true"] {
+            background-color: #2563EB;
+            color: #FFFFFF !important;
+        }
+
+        /* Metric cards */
+        [data-testid="stMetric"] {
+            background: white;
+            padding: 16px 20px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            border: 1px solid #E2E8F0;
+        }
+        div[data-testid="stMetricValue"] {
+            font-size: 28px;
+            color: #2563EB;
+            font-weight: 700;
+        }
+        div[data-testid="stMetricLabel"] {
+            color: #64748B;
+            font-size: 13px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        /* Data editor / dataframe styling */
+        .stDataFrame, .stDataEditor {
+            font-size: 14px;
+        }
+        [data-testid="stDataFrameResizable"] {
+            border: 1px solid #E2E8F0;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        /* Title text */
+        h1 { color: #1E293B; }
+
+        /* Primary button accent */
+        .stButton > button[kind="primary"] {
+            background-color: #2563EB;
+            border-color: #2563EB;
+        }
+        .stButton > button[kind="primary"]:hover {
+            background-color: #1D4ED8;
+            border-color: #1D4ED8;
+        }
+
+        /* Save button CTA styling */
+        .stButton > button[kind="primary"][data-testid*="save"] {
+            background-color: #F97316;
+            border-color: #F97316;
+        }
+        .stButton > button[kind="primary"][data-testid*="save"]:hover {
+            background-color: #EA580C;
+            border-color: #EA580C;
+        }
+
+        /* Caption styling */
+        .stCaption {
+            color: #94A3B8;
+        }
+
+        /* Divider */
+        hr {
+            border-color: #E2E8F0;
+        }
+
+        /* Search input */
+        .stTextInput > div > div > input {
+            border-color: #E2E8F0;
+            border-radius: 6px;
+        }
+        .stTextInput > div > div > input:focus {
+            border-color: #3B82F6;
+            box-shadow: 0 0 0 2px rgba(59,130,246,0.15);
+        }
+    </style>
+    """, unsafe_allow_html=True)
 
     if not check_auth():
         return
 
     # --- Sidebar navigation ---
     with st.sidebar:
-        st.title("🎓 WCC Contract Admin")
-        st.divider()
+        st.markdown(
+            '<h2 style="color:#F8FAFC;margin-bottom:0;padding-left:4px;">'
+            "WCC Contract Admin</h2>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<p style="color:#94A3B8;font-size:13px;margin-top:0;padding-left:4px;">'
+            "Data Management Dashboard</p>",
+            unsafe_allow_html=True,
+        )
 
+        st.markdown("---")
+
+        # Build nav items (skip separator entries)
+        selectable_items = [item for item in NAV_ITEMS if item != "---"]
         selected_tab = st.radio(
             "Navigation",
-            NAV_ITEMS,
-            format_func=lambda x: f"{NAV_ICONS.get(x, '')} {x}",
+            selectable_items,
+            format_func=lambda x: f":{NAV_ICONS.get(x, 'page')}: {x}",
             label_visibility="collapsed",
         )
 
-        st.divider()
+        st.markdown("---")
 
-        # Refresh data button
-        if st.button("Refresh Data", use_container_width=True):
+        if st.button(
+            ":arrows_counterclockwise: Refresh Data",
+            use_container_width=True,
+        ):
             st.cache_resource.clear()
             st.rerun()
 
-        st.divider()
+        st.markdown("---")
 
-        if st.button("Logout", use_container_width=True, type="secondary"):
+        if st.button(
+            ":door: Logout",
+            use_container_width=True,
+            type="secondary",
+        ):
             st.session_state["authenticated"] = False
             st.rerun()
 
-        st.caption("WCC Contract Generator v2.0")
+        st.markdown("")
+        st.markdown(
+            '<p style="color:#64748B;font-size:11px;text-align:center;">'
+            "WCC Contract Generator v3.0</p>",
+            unsafe_allow_html=True,
+        )
 
     # --- Main content area ---
-    st.title(f"{NAV_ICONS.get(selected_tab, '')} {selected_tab}")
+    icon = NAV_ICONS.get(selected_tab, "page")
+    st.markdown(
+        f'<h1 style="color:#1E293B;">:{icon}: {selected_tab}</h1>',
+        unsafe_allow_html=True,
+    )
 
     if selected_tab == "Programs":
         render_programs_tab()
