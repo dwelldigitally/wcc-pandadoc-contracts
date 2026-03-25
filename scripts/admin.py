@@ -18,7 +18,6 @@ from datetime import datetime, date
 import gspread
 import pandas as pd
 import streamlit as st
-from itables.streamlit import interactive_table
 from oauth2client.service_account import ServiceAccountCredentials
 
 # ---------------------------------------------------------------------------
@@ -556,9 +555,7 @@ def render_programs_tab():
     display_df = filter_dataframe(df, search) if not df.empty else df
 
     if not display_df.empty:
-        interactive_table(
-            display_df,
-            paging=len(display_df) > 20,
+        st.dataframe(display_df, use_container_width=True, hide_index=True) > 20,
             searching=False,
             ordering=True,
             classes="display compact",
@@ -907,9 +904,7 @@ def render_intakes_tab():
 
     # Data table
     if not display_df.empty:
-        interactive_table(
-            display_df,
-            paging=len(display_df) > 20,
+        st.dataframe(display_df, use_container_width=True, hide_index=True) > 20,
             searching=False,
             ordering=True,
             classes="display compact",
@@ -1222,9 +1217,7 @@ def render_fees_tab():
 
     # Data table
     if not display_df.empty:
-        interactive_table(
-            display_df,
-            paging=len(display_df) > 20,
+        st.dataframe(display_df, use_container_width=True, hide_index=True) > 20,
             searching=False,
             ordering=True,
             classes="display compact",
@@ -1483,9 +1476,7 @@ def render_outline_map_tab():
 
     # Data table
     if not display_with_links.empty:
-        interactive_table(
-            display_with_links,
-            paging=len(display_with_links) > 20,
+        st.dataframe(display_with_links, use_container_width=True, hide_index=True) > 20,
             searching=False,
             ordering=True,
             classes="display compact",
@@ -1625,13 +1616,7 @@ def render_audit_log_tab():
     filtered = filtered.iloc[::-1].reset_index(drop=True)
 
     if not filtered.empty:
-        interactive_table(
-            filtered,
-            paging=True,
-            searching=True,
-            ordering=True,
-            classes="display compact",
-        )
+        st.dataframe(filtered, use_container_width=True, hide_index=True)
     else:
         st.info("No matching audit records.")
     st.caption(f"Showing {len(filtered)} of {total} records (newest first).")
@@ -1708,13 +1693,7 @@ def render_contract_log_tab():
     filtered = filtered.iloc[::-1].reset_index(drop=True)
 
     if not filtered.empty:
-        interactive_table(
-            filtered,
-            paging=True,
-            searching=True,
-            ordering=True,
-            classes="display compact",
-        )
+        st.dataframe(filtered, use_container_width=True, hide_index=True)
     else:
         st.info("No matching contract records.")
     st.caption(f"Showing {len(filtered)} of {total} records (newest first).")
