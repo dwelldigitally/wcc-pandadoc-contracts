@@ -76,10 +76,10 @@ def get_gspread_client_server():
 
     try:
         import gspread
-        from oauth2client.service_account import ServiceAccountCredentials
+        from google.oauth2.service_account import Credentials
         creds_dict = json.loads(sa_json)
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        credentials = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         client = gspread.authorize(credentials)
         _gspread_client = client.open_by_key(GOOGLE_SHEETS_ID)
         return _gspread_client
@@ -544,7 +544,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_json({"error": "Not found"}, 404)
 
     def log_message(self, format, *args):
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] {format % args}")
+        print(f"[{datetime.now(PST).strftime('%H:%M:%S')}] {format % args}")
 
 
 def main():

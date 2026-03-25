@@ -25,6 +25,7 @@ import json
 import copy
 import re
 import time
+import tempfile
 import urllib.request
 import urllib.error
 from pathlib import Path
@@ -41,6 +42,9 @@ from fee_matching import match_fees, resolve_fee_amounts, is_domestic, DOMESTIC_
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+
+# Pacific Daylight Time (UTC-7) — BC is in PDT most of the year
+PST = timezone(timedelta(hours=-7))
 
 SCRIPT_DIR = Path(__file__).parent
 DATA_DIR = SCRIPT_DIR.parent / "data"
@@ -64,6 +68,9 @@ HUBSPOT_BASE_URL = "https://api.hubapi.com"
 
 GOOGLE_SHEETS_ID = os.environ.get("GOOGLE_SHEETS_ID", "")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+
+PANDADOC_STATUS_DRAFT = "document.draft"
+PANDADOC_STATUS_ERROR_PREFIX = "error"
 
 INSTITUTION = {
     "name": "Western Community College Inc.",
@@ -248,7 +255,7 @@ def lookup_program(programs, name):
 
 
 def lookup_next_intake(intakes, name):
-    now = datetime.now()
+    now = datetime.now(PST)
     candidates = [
         i for i in intakes
         if i.get("program_name", "").lower() == name.lower()
@@ -258,7 +265,7 @@ def lookup_next_intake(intakes, name):
     candidates.sort(key=lambda x: x["intake_date"])
     for c in candidates:
         try:
-            if datetime.strptime(c["intake_date"], "%Y-%m-%d") >= now:
+            if datetime.strptime(c["intake_date"], "%Y-%m-%d").replace(tzinfo=PST) >= now:
                 return c
         except ValueError:
             pass
@@ -654,7 +661,7 @@ def split_docx_at_fees(docx_path):
 
 SIGNING_TEMPLATE_ID = os.environ.get("PANDADOC_SIGNING_TEMPLATE_ID", "DsoTNroxu5qX332aioZVjK")
 OUTLINE_MAP_PATH = DATA_DIR / "program-outline-map.csv"
-OUTLINE_CACHE_DIR = Path("/tmp/outlines")
+OUTLINE_CACHE_DIR = Path(os.environ.get("OUTLINE_CACHE_DIR", Path(tempfile.gettempdir()) / "wcc_outlines"))
 
 
 def load_outline_map():
@@ -766,9 +773,9 @@ def wait_for_document_draft(doc_id, max_wait=30):
             token_type="API-Key",
         )
         doc_status = status.get("status", "")
-        if doc_status == "document.draft":
+        if doc_status == PANDADOC_STATUS_DRAFT:
             return True
-        if "error" in doc_status:
+        if PANDADOC_STATUS_ERROR_PREFIX in doc_status:
             raise Exception(f"Document error: {doc_status}")
         time.sleep(1)
     raise Exception(f"Document did not reach draft status within {max_wait}s")
@@ -904,7 +911,7 @@ def main():
             print(f"   Delivery: {delivery_method} ({tier})")
 
     # Step 3c: Match fees using effective_from logic
-    reference_date = selected_intake_date or (intake.get("intake_date") if intake else "") or datetime.now().strftime("%Y-%m-%d")
+    reference_date = selected_intake_date or (intake.get("intake_date") if intake else "") or datetime.now(PST).strftime("%Y-%m-%d")
     matched_fees, effective_from = match_fees(data["fees"], program_name, reference_date)
     if not matched_fees:
         print(f"   ERROR: No fees found for '{program_name}' effective on {reference_date}.")
@@ -1065,43 +1072,9 @@ def main():
     print(f"\n9. Linking to HubSpot deal...")
     link_to_hubspot(doc_id, deal_id)
 
-    # Step 10: Write to Contract Log
-    print(f"\n10. Writing to Contract Log...")
+    # Contract logging is handled by the backend server (backend-server.py)
+
     doc_url = f"https://app.pandadoc.com/a/#/documents/{doc_id}"
-    try:
-        log_sheet_name = "Contract Log"
-        log_row = [
-            f"CTR-{deal_id}-{datetime.now().strftime('%H%M%S')}",  # contract_id
-            datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),   # generated_at
-            deal_id,                                                # deal_id
-            f"{contact.get('firstname', '')} {contact.get('lastname', '')}",  # student_name
-            program_name,                                           # program_name
-            selected_intake_date or "",                             # intake_date
-            tier,                                                   # fee_tier
-            f"${total:,.2f}",                                      # total_amount
-            "standard",                                            # contract_type
-            doc_id,                                                # pandadoc_document_id
-            doc_url,                                               # pandadoc_url
-            advisor.get("email", ""),                               # generated_by
-            "draft",                                               # status
-        ]
-        # Write to Google Sheets if available
-        if GOOGLE_SHEETS_ID and GOOGLE_API_KEY:
-            from urllib.parse import quote
-            import urllib.request as urlreq2
-            # Use the same service account approach as the admin panel,
-            # or write via Sheets API with the API key (append only works with service account)
-            # For now, use the Sheets API v4 append endpoint
-            append_url = (
-                f"https://sheets.googleapis.com/v4/spreadsheets/{GOOGLE_SHEETS_ID}"
-                f"/values/{quote(log_sheet_name)}:append"
-                f"?valueInputOption=USER_ENTERED&key={GOOGLE_API_KEY}"
-            )
-            # API key can't write — log locally instead and print for the backend to capture
-            print(f"   Contract Log: {','.join(str(v) for v in log_row)}")
-        print(f"   Logged contract: CTR-{deal_id}")
-    except Exception as e:
-        print(f"   Warning: Could not write contract log: {e}")
 
     # Done
     print("\n" + "=" * 50)

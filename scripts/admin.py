@@ -18,7 +18,7 @@ from datetime import datetime, date
 import gspread
 import pandas as pd
 import streamlit as st
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -130,7 +130,7 @@ def get_gspread_client():
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
     ]
-    credentials = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
     return gspread.authorize(credentials)
 
 
