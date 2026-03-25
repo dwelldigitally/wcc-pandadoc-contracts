@@ -538,32 +538,8 @@ def render_programs_tab():
 
     st.markdown("---")
 
-    # Search + Action buttons
-    search_col, btn_col = st.columns([3, 2])
-    with search_col:
-        search = render_search_bar("prog_search", "Search programs by name, code...")
-    with btn_col:
-        has_selection = "selected_program" in st.session_state
-        b1, b2, b3 = st.columns(3)
-        with b1:
-            if st.button("\u2795 Add", use_container_width=True, key="prog_add"):
-                add_program_dialog()
-        with b2:
-            if st.button(
-                "\u270f\ufe0f Edit",
-                use_container_width=True,
-                disabled=not has_selection,
-                key="prog_edit",
-            ):
-                edit_program_dialog(st.session_state.get("selected_program", {}))
-        with b3:
-            if st.button(
-                "\U0001f5d1\ufe0f Delete",
-                use_container_width=True,
-                disabled=not has_selection,
-                key="prog_del",
-            ):
-                delete_program_dialog(st.session_state.get("selected_program", {}))
+    # Search
+    search = render_search_bar("prog_search", "Search programs by name, code...")
 
     # Data table (read-only with selection)
     display_df = filter_dataframe(df, search) if not df.empty else df
@@ -590,10 +566,32 @@ def render_programs_tab():
         if "selected_program" in st.session_state:
             del st.session_state["selected_program"]
 
-    # Show selected row info
-    if "selected_program" in st.session_state:
-        sel = st.session_state["selected_program"]
-        st.info(f"Selected: **{sel['program_name']}** ({sel['program_code']})")
+    # Action buttons AFTER table (so selection is already processed)
+    has_selection = "selected_program" in st.session_state
+    b1, b2, b3, b4 = st.columns([1, 1, 1, 2])
+    with b1:
+        if st.button("➕ Add", use_container_width=True, key="prog_add"):
+            add_program_dialog()
+    with b2:
+        if st.button(
+            "✏️ Edit",
+            use_container_width=True,
+            disabled=not has_selection,
+            key="prog_edit",
+        ):
+            edit_program_dialog(st.session_state.get("selected_program", {}))
+    with b3:
+        if st.button(
+            "🗑️ Delete",
+            use_container_width=True,
+            disabled=not has_selection,
+            key="prog_del",
+        ):
+            delete_program_dialog(st.session_state.get("selected_program", {}))
+    with b4:
+        if has_selection:
+            sel = st.session_state["selected_program"]
+            st.info(f"Selected: **{sel['program_name']}**")
 
     if not df.empty:
         st.caption(f"{len(display_df)} program{'s' if len(display_df) != 1 else ''} shown")
@@ -899,29 +897,6 @@ def render_intakes_tab():
             display_df = display_df[display_df["status"] == status_filter]
         display_df = filter_dataframe(display_df, search)
 
-    # Action buttons
-    has_selection = "selected_intake" in st.session_state
-    b1, b2, b3, _ = st.columns([1, 1, 1, 4])
-    with b1:
-        if st.button("\u2795 Add", use_container_width=True, key="int_add"):
-            add_intake_dialog()
-    with b2:
-        if st.button(
-            "\u270f\ufe0f Edit",
-            use_container_width=True,
-            disabled=not has_selection,
-            key="int_edit",
-        ):
-            edit_intake_dialog(st.session_state.get("selected_intake", {}))
-    with b3:
-        if st.button(
-            "\U0001f5d1\ufe0f Delete",
-            use_container_width=True,
-            disabled=not has_selection,
-            key="int_del",
-        ):
-            delete_intake_dialog(st.session_state.get("selected_intake", {}))
-
     if not programs:
         st.warning("Add programs first before managing intakes.")
 
@@ -955,13 +930,35 @@ def render_intakes_tab():
         if "selected_intake" in st.session_state:
             del st.session_state["selected_intake"]
 
-    # Show selected row info
-    if "selected_intake" in st.session_state:
-        sel = st.session_state["selected_intake"]
-        st.info(
-            f"Selected: **{sel['program_name']}** | "
-            f"{sel['intake_date']} | {sel['campus']}"
-        )
+    # Action buttons AFTER table (so selection is already processed)
+    has_selection = "selected_intake" in st.session_state
+    b1, b2, b3, b4 = st.columns([1, 1, 1, 2])
+    with b1:
+        if st.button("\u2795 Add", use_container_width=True, key="int_add"):
+            add_intake_dialog()
+    with b2:
+        if st.button(
+            "\u270f\ufe0f Edit",
+            use_container_width=True,
+            disabled=not has_selection,
+            key="int_edit",
+        ):
+            edit_intake_dialog(st.session_state.get("selected_intake", {}))
+    with b3:
+        if st.button(
+            "\U0001f5d1\ufe0f Delete",
+            use_container_width=True,
+            disabled=not has_selection,
+            key="int_del",
+        ):
+            delete_intake_dialog(st.session_state.get("selected_intake", {}))
+    with b4:
+        if has_selection:
+            sel = st.session_state["selected_intake"]
+            st.info(
+                f"Selected: **{sel['program_name']}** | "
+                f"{sel['intake_date']} | {sel['campus']}"
+            )
 
     if total > 0:
         st.caption(f"Showing {len(display_df)} of {total} intakes")
@@ -1214,29 +1211,6 @@ def render_fees_tab():
             display_df = display_df[display_df["program_name"] == prog_filter]
         display_df = filter_dataframe(display_df, search)
 
-    # Action buttons
-    has_selection = "selected_fee" in st.session_state
-    b1, b2, b3, _ = st.columns([1, 1, 1, 4])
-    with b1:
-        if st.button("\u2795 Add", use_container_width=True, key="fee_add"):
-            add_fee_dialog()
-    with b2:
-        if st.button(
-            "\u270f\ufe0f Edit",
-            use_container_width=True,
-            disabled=not has_selection,
-            key="fee_edit",
-        ):
-            edit_fee_dialog(st.session_state.get("selected_fee", {}))
-    with b3:
-        if st.button(
-            "\U0001f5d1\ufe0f Delete",
-            use_container_width=True,
-            disabled=not has_selection,
-            key="fee_del",
-        ):
-            delete_fee_dialog(st.session_state.get("selected_fee", {}))
-
     if not programs:
         st.warning("Add programs first before managing fees.")
 
@@ -1271,14 +1245,36 @@ def render_fees_tab():
         if "selected_fee" in st.session_state:
             del st.session_state["selected_fee"]
 
-    # Show selected row info
-    if "selected_fee" in st.session_state:
-        sel = st.session_state["selected_fee"]
-        st.info(
-            f"Selected: **{sel['program_name']}** | {sel['fee_name']} "
-            f"(Dom: ${safe_float(sel.get('domestic_amount', 0)):,.2f} / "
-            f"Intl: ${safe_float(sel.get('international_amount', 0)):,.2f})"
-        )
+    # Action buttons AFTER table (so selection is already processed)
+    has_selection = "selected_fee" in st.session_state
+    b1, b2, b3, b4 = st.columns([1, 1, 1, 2])
+    with b1:
+        if st.button("\u2795 Add", use_container_width=True, key="fee_add"):
+            add_fee_dialog()
+    with b2:
+        if st.button(
+            "\u270f\ufe0f Edit",
+            use_container_width=True,
+            disabled=not has_selection,
+            key="fee_edit",
+        ):
+            edit_fee_dialog(st.session_state.get("selected_fee", {}))
+    with b3:
+        if st.button(
+            "\U0001f5d1\ufe0f Delete",
+            use_container_width=True,
+            disabled=not has_selection,
+            key="fee_del",
+        ):
+            delete_fee_dialog(st.session_state.get("selected_fee", {}))
+    with b4:
+        if has_selection:
+            sel = st.session_state["selected_fee"]
+            st.info(
+                f"Selected: **{sel['program_name']}** | {sel['fee_name']} "
+                f"(Dom: ${safe_float(sel.get('domestic_amount', 0)):,.2f} / "
+                f"Intl: ${safe_float(sel.get('international_amount', 0)):,.2f})"
+            )
 
     if total > 0:
         st.caption(f"Showing {len(display_df)} of {total} fee rows")
@@ -1462,32 +1458,8 @@ def render_outline_map_tab():
 
     st.markdown("---")
 
-    # Search + Action buttons
-    search_col, btn_col = st.columns([3, 2])
-    with search_col:
-        search = render_search_bar("outline_search", "Search outline mappings...")
-    with btn_col:
-        has_selection = "selected_outline" in st.session_state
-        b1, b2, b3 = st.columns(3)
-        with b1:
-            if st.button("\u2795 Add", use_container_width=True, key="outline_add"):
-                add_outline_dialog()
-        with b2:
-            if st.button(
-                "\u270f\ufe0f Edit",
-                use_container_width=True,
-                disabled=not has_selection,
-                key="outline_edit",
-            ):
-                edit_outline_dialog(st.session_state.get("selected_outline", {}))
-        with b3:
-            if st.button(
-                "\U0001f5d1\ufe0f Delete",
-                use_container_width=True,
-                disabled=not has_selection,
-                key="outline_del",
-            ):
-                delete_outline_dialog(st.session_state.get("selected_outline", {}))
+    # Search
+    search = render_search_bar("outline_search", "Search outline mappings...")
 
     display_df = filter_dataframe(df, search) if not df.empty else df
 
@@ -1538,13 +1510,35 @@ def render_outline_map_tab():
         if "selected_outline" in st.session_state:
             del st.session_state["selected_outline"]
 
-    # Show selected row info
-    if "selected_outline" in st.session_state:
-        sel = st.session_state["selected_outline"]
-        st.info(
-            f"Selected: **{sel['program_name']}** "
-            f"({sel.get('outline_filename', 'no filename')})"
-        )
+    # Action buttons AFTER table (so selection is already processed)
+    has_selection = "selected_outline" in st.session_state
+    b1, b2, b3, b4 = st.columns([1, 1, 1, 2])
+    with b1:
+        if st.button("\u2795 Add", use_container_width=True, key="outline_add"):
+            add_outline_dialog()
+    with b2:
+        if st.button(
+            "\u270f\ufe0f Edit",
+            use_container_width=True,
+            disabled=not has_selection,
+            key="outline_edit",
+        ):
+            edit_outline_dialog(st.session_state.get("selected_outline", {}))
+    with b3:
+        if st.button(
+            "\U0001f5d1\ufe0f Delete",
+            use_container_width=True,
+            disabled=not has_selection,
+            key="outline_del",
+        ):
+            delete_outline_dialog(st.session_state.get("selected_outline", {}))
+    with b4:
+        if has_selection:
+            sel = st.session_state["selected_outline"]
+            st.info(
+                f"Selected: **{sel['program_name']}** "
+                f"({sel.get('outline_filename', 'no filename')})"
+            )
 
     if total_mappings > 0:
         st.caption(f"Showing {len(display_df)} of {total_mappings} mappings")
