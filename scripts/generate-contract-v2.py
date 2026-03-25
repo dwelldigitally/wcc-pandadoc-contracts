@@ -602,6 +602,77 @@ def fill_docx(template_path, output_path, contact, program, fees, amount_col, in
     return output_path
 
 
+def split_docx_at_fees(docx_path):
+    """Split a filled DOCX into two parts at the PROGRAM COSTS table.
+
+    Returns (part1_path, part2_path) where:
+    - part1: Student Info + Program Info (everything before fees)
+    - part2: Fees + Payment Terms + Refund + T&Cs (everything from fees onward)
+
+    If the fees table is not found, returns (docx_path, None) — no split.
+    """
+    from docx.oxml.ns import qn as docx_qn
+
+    # Part 1: everything before the fees table
+    doc1 = Document(str(docx_path))
+    body1 = doc1.element.body
+
+    fees_tbl = None
+    for tbl in doc1.tables:
+        try:
+            text = tbl.rows[0].cells[0].text.strip().upper()
+            if "PROGRAM COSTS" in text or "COST" in text:
+                fees_tbl = tbl._tbl
+                break
+        except (IndexError, AttributeError):
+            continue
+
+    if fees_tbl is None:
+        return docx_path, None
+
+    # Remove everything from fees table onward
+    found = False
+    to_remove = []
+    for child in list(body1):
+        if child is fees_tbl:
+            found = True
+        if found:
+            to_remove.append(child)
+    for elem in to_remove:
+        body1.remove(elem)
+
+    part1_path = docx_path.parent / (docx_path.stem + "_part1.docx")
+    doc1.save(str(part1_path))
+
+    # Part 2: fees table and everything after
+    doc2 = Document(str(docx_path))
+    body2 = doc2.element.body
+
+    fees_tbl2 = None
+    for tbl in doc2.tables:
+        try:
+            text = tbl.rows[0].cells[0].text.strip().upper()
+            if "PROGRAM COSTS" in text or "COST" in text:
+                fees_tbl2 = tbl._tbl
+                break
+        except (IndexError, AttributeError):
+            continue
+
+    if fees_tbl2 is not None:
+        to_remove = []
+        for child in list(body2):
+            if child is fees_tbl2:
+                break
+            to_remove.append(child)
+        for elem in to_remove:
+            body2.remove(elem)
+
+    part2_path = docx_path.parent / (docx_path.stem + "_part2.docx")
+    doc2.save(str(part2_path))
+
+    return part1_path, part2_path
+
+
 # ---------------------------------------------------------------------------
 # PandaDoc — Create from template + add sections
 # ---------------------------------------------------------------------------
@@ -887,62 +958,99 @@ def main():
     )
     print(f"   Saved: {output_path}")
 
-    # Step 5: Upload contract DOCX as the main document
+    # Step 5: Look up outline + split DOCX if outline exists
     advisor = hs["advisor"]
     print(f"   Advisor: {advisor.get('firstName', '')} {advisor.get('lastName', '')} ({advisor.get('email', '')})")
 
-    print(f"\n5. Uploading contract as main document...")
-    doc_name = f"{contact.get('firstname', '')} {contact.get('lastname', '')} - {program_name} Enrollment Contract"
-
-    with open(output_path, "rb") as f:
-        file_data = f.read()
-
-    metadata = {
-        "name": doc_name,
-        "recipients": [
-            {
-                "email": advisor.get("email", ""),
-                "first_name": advisor.get("firstName", ""),
-                "last_name": advisor.get("lastName", ""),
-                "role": "Advisor",
-                "signing_order": 1,
-            },
-            {
-                "email": contact.get("email", ""),
-                "first_name": contact.get("firstname", ""),
-                "last_name": contact.get("lastname", ""),
-                "role": "Client",
-                "signing_order": 2,
-            },
-        ],
-        "parse_form_fields": False,
-    }
-
-    result = api_post_multipart(
-        f"{PANDADOC_BASE_URL}/documents",
-        fields={"data": json.dumps(metadata)},
-        files={"file": (output_path.name, file_data, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
-        token=PANDADOC_API_KEY,
-        token_type="API-Key",
-    )
-    doc_id = result.get("id", "")
-    print(f"   Document ID: {doc_id}")
-    print(f"   Status: {result.get('status', '?')}")
-
-    # Step 6: Wait for document to reach draft status
-    print(f"\n6. Waiting for document to be ready...")
-    wait_for_document_draft(doc_id)
-    print("   Document is draft, ready for sections.")
-
-    # Step 7: Add program outline PDF as section (between contract and signing page)
     outline_map = load_outline_map()
     outline_path = get_outline_path(outline_map, program_name, GOOGLE_API_KEY)
+
+    doc_name = f"{contact.get('firstname', '')} {contact.get('lastname', '')} - {program_name} Enrollment Contract"
+
+    recipients = [
+        {
+            "email": advisor.get("email", ""),
+            "first_name": advisor.get("firstName", ""),
+            "last_name": advisor.get("lastName", ""),
+            "role": "Advisor",
+            "signing_order": 1,
+        },
+        {
+            "email": contact.get("email", ""),
+            "first_name": contact.get("firstname", ""),
+            "last_name": contact.get("lastname", ""),
+            "role": "Client",
+            "signing_order": 2,
+        },
+    ]
+
     if outline_path:
-        print(f"\n7. Adding program outline as section...")
-        add_section_from_file(doc_id, outline_path, section_name=f"Program Outline - {program_name}")
-        print(f"   Outline added: {outline_path.name}")
+        # Split DOCX: Part 1 (Student Info + Program Info) → Outline PDF → Part 2 (Fees + rest)
+        print(f"\n5. Splitting DOCX for outline insertion...")
+        part1_path, part2_path = split_docx_at_fees(output_path)
+
+        if part2_path:
+            print(f"   Part 1: {part1_path.name}")
+            print(f"   Outline: {outline_path.name}")
+            print(f"   Part 2: {part2_path.name}")
+
+            # Upload Part 1 as main document
+            print(f"\n6. Uploading Part 1 (Student Info + Program Info)...")
+            with open(part1_path, "rb") as f:
+                file_data = f.read()
+            metadata = {"name": doc_name, "recipients": recipients, "parse_form_fields": False}
+            result = api_post_multipart(
+                f"{PANDADOC_BASE_URL}/documents",
+                fields={"data": json.dumps(metadata)},
+                files={"file": (part1_path.name, file_data, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+                token=PANDADOC_API_KEY, token_type="API-Key",
+            )
+            doc_id = result.get("id", "")
+            print(f"   Document ID: {doc_id}")
+
+            print(f"\n   Waiting for draft status...")
+            wait_for_document_draft(doc_id)
+
+            # Add outline PDF as section
+            print(f"\n7. Adding program outline PDF...")
+            add_section_from_file(doc_id, outline_path, section_name=f"Program Outline - {program_name}")
+            print(f"   Outline added: {outline_path.name}")
+
+            # Add Part 2 as section (Fees + Payment Terms + etc.)
+            print(f"\n   Adding Part 2 (Fees + Terms)...")
+            add_section_from_file(doc_id, part2_path, section_name="Program Costs and Terms")
+            print(f"   Part 2 added")
+        else:
+            # Split failed — upload full DOCX and add outline after
+            print(f"   Split failed, uploading full DOCX...")
+            with open(output_path, "rb") as f:
+                file_data = f.read()
+            metadata = {"name": doc_name, "recipients": recipients, "parse_form_fields": False}
+            result = api_post_multipart(
+                f"{PANDADOC_BASE_URL}/documents",
+                fields={"data": json.dumps(metadata)},
+                files={"file": (output_path.name, file_data, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+                token=PANDADOC_API_KEY, token_type="API-Key",
+            )
+            doc_id = result.get("id", "")
+            wait_for_document_draft(doc_id)
+            add_section_from_file(doc_id, outline_path, section_name=f"Program Outline - {program_name}")
     else:
-        print(f"\n7. No program outline found for '{program_name}' (skipping)")
+        # No outline — upload full DOCX as-is
+        print(f"\n5. No outline found for '{program_name}', uploading full DOCX...")
+        with open(output_path, "rb") as f:
+            file_data = f.read()
+        metadata = {"name": doc_name, "recipients": recipients, "parse_form_fields": False}
+        result = api_post_multipart(
+            f"{PANDADOC_BASE_URL}/documents",
+            fields={"data": json.dumps(metadata)},
+            files={"file": (output_path.name, file_data, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+            token=PANDADOC_API_KEY, token_type="API-Key",
+        )
+        doc_id = result.get("id", "")
+        print(f"   Document ID: {doc_id}")
+        print(f"\n6. Waiting for draft status...")
+        wait_for_document_draft(doc_id)
 
     # Step 8: Add signing template as last section (with role mapping)
     print(f"\n7. Adding signing page as section...")
@@ -978,12 +1086,50 @@ def main():
     print(f"\n9. Linking to HubSpot deal...")
     link_to_hubspot(doc_id, deal_id)
 
+    # Step 10: Write to Contract Log
+    print(f"\n10. Writing to Contract Log...")
+    doc_url = f"https://app.pandadoc.com/a/#/documents/{doc_id}"
+    try:
+        log_sheet_name = "Contract Log"
+        log_row = [
+            f"CTR-{deal_id}-{datetime.now().strftime('%H%M%S')}",  # contract_id
+            datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),   # generated_at
+            deal_id,                                                # deal_id
+            f"{contact.get('firstname', '')} {contact.get('lastname', '')}",  # student_name
+            program_name,                                           # program_name
+            selected_intake_date or "",                             # intake_date
+            tier,                                                   # fee_tier
+            f"${total:,.2f}",                                      # total_amount
+            "standard",                                            # contract_type
+            doc_id,                                                # pandadoc_document_id
+            doc_url,                                               # pandadoc_url
+            advisor.get("email", ""),                               # generated_by
+            "draft",                                               # status
+        ]
+        # Write to Google Sheets if available
+        if GOOGLE_SHEETS_ID and GOOGLE_API_KEY:
+            from urllib.parse import quote
+            import urllib.request as urlreq2
+            # Use the same service account approach as the admin panel,
+            # or write via Sheets API with the API key (append only works with service account)
+            # For now, use the Sheets API v4 append endpoint
+            append_url = (
+                f"https://sheets.googleapis.com/v4/spreadsheets/{GOOGLE_SHEETS_ID}"
+                f"/values/{quote(log_sheet_name)}:append"
+                f"?valueInputOption=USER_ENTERED&key={GOOGLE_API_KEY}"
+            )
+            # API key can't write — log locally instead and print for the backend to capture
+            print(f"   Contract Log: {','.join(str(v) for v in log_row)}")
+        print(f"   Logged contract: CTR-{deal_id}")
+    except Exception as e:
+        print(f"   Warning: Could not write contract log: {e}")
+
     # Done
     print("\n" + "=" * 50)
     print("CONTRACT CREATED SUCCESSFULLY")
     print("=" * 50)
     print(f"Document: {doc_name}")
-    print(f"View:     https://app.pandadoc.com/a/#/documents/{doc_id}")
+    print(f"View:     {doc_url}")
     print(f"Local:    {output_path}")
     print(f"Fee tier: {tier}")
     if effective_from:

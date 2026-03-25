@@ -62,6 +62,37 @@ CONTACT_PROPERTIES = [
 
 
 # ---------------------------------------------------------------------------
+# Google Sheets write client (for Contract Log)
+# ---------------------------------------------------------------------------
+
+_gspread_client = None
+
+def get_gspread_client_server():
+    """Return a gspread spreadsheet for writing (Contract Log).
+    Uses GOOGLE_SERVICE_ACCOUNT_JSON env var. Returns None if not configured."""
+    global _gspread_client
+    if _gspread_client is not None:
+        return _gspread_client
+
+    sa_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+    if not sa_json:
+        return None
+
+    try:
+        import gspread
+        from oauth2client.service_account import ServiceAccountCredentials
+        creds_dict = json.loads(sa_json)
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(credentials)
+        _gspread_client = client.open_by_key(GOOGLE_SHEETS_ID)
+        return _gspread_client
+    except Exception as e:
+        print(f"Warning: Could not init gspread for contract log: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
 
@@ -476,6 +507,37 @@ class RequestHandler(BaseHTTPRequestHandler):
                     parts = line.strip().split()
                     if parts[0].isdigit():
                         fee_count = parts[0]
+
+            # Write to Contract Log in Google Sheets
+            try:
+                contract_log_row = [
+                    f"CTR-{deal_id}-{datetime.now(PST).strftime('%H%M%S')}",
+                    datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    str(deal_id),
+                    student,
+                    program,
+                    intake_date or "",
+                    fee_tier,
+                    total,
+                    "standard",
+                    doc_id,
+                    doc_url,
+                    "draft",
+                ]
+                spreadsheet = get_gspread_client_server()
+                try:
+                    log_ws = spreadsheet.worksheet("Contract Log")
+                except Exception:
+                    log_ws = spreadsheet.add_worksheet(title="Contract Log", rows=1000, cols=12)
+                    log_ws.append_row([
+                        "contract_id", "generated_at", "deal_id", "student_name",
+                        "program_name", "intake_date", "fee_tier", "total_amount",
+                        "contract_type", "pandadoc_document_id", "pandadoc_url", "status",
+                    ], value_input_option="RAW")
+                log_ws.append_row(contract_log_row, value_input_option="USER_ENTERED")
+                print(f"Contract logged: CTR-{deal_id}")
+            except Exception as e:
+                print(f"Warning: Could not write contract log: {e}")
 
             self.send_json({
                 "documentId": doc_id,
