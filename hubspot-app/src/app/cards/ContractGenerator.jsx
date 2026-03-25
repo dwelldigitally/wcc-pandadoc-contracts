@@ -253,7 +253,7 @@ const ContractGenerator = ({ actions, context }) => {
   const dealMissing = programData?.dealMissing || [];
   const feeTier = fees.tier || "Unknown";
   const feeItems = fees.items || [];
-  const allWarnings = [...contactMissing, ...dealMissing];
+  const hasOutline = programData?.hasOutline || false;
   const intakeRequired = intakes.length > 0 && !selectedIntake;
 
   // Delivery method based on residency
@@ -263,6 +263,34 @@ const ContractGenerator = ({ actions, context }) => {
       ? selectedIntake.international_delivery_method || ""
       : selectedIntake.domestic_delivery_method || "";
   }
+
+  // Build warnings list
+  const allWarnings = [];
+
+  // Contact field warnings
+  contactMissing.forEach((f) => allWarnings.push({ type: "error", msg: `${f} (Contact)` }));
+  dealMissing.forEach((f) => allWarnings.push({ type: "error", msg: `${f} (Deal)` }));
+
+  // Fee warnings
+  if (feeItems.length === 0) {
+    allWarnings.push({ type: "error", msg: "No fee schedule found for this program" });
+  }
+  if (feeTier === "Unknown") {
+    allWarnings.push({ type: "error", msg: "Fee tier unknown — set Residence Status on the contact" });
+  }
+
+  // Outline warning
+  if (!hasOutline) {
+    allWarnings.push({ type: "warning", msg: "No program outline PDF mapped for this program" });
+  }
+
+  // Intake warnings
+  if (intakes.length === 0) {
+    allWarnings.push({ type: "info", msg: "No open intakes — advisor fills dates in PandaDoc" });
+  }
+
+  const errorCount = allWarnings.filter((w) => w.type === "error").length;
+  const warningCount = allWarnings.length;
 
   // Can generate: must have program data loaded, no critical blockers
   const canGenerate =
@@ -405,9 +433,24 @@ const ContractGenerator = ({ actions, context }) => {
       {allWarnings.length > 0 && (
         <>
           <Divider />
-          <Alert title={`${allWarnings.length} Warning${allWarnings.length > 1 ? "s" : ""}`} variant="warning">
-            {allWarnings.join(", ")}
-          </Alert>
+          <Text format={{ fontWeight: "bold" }}>
+            Pre-flight Check ({errorCount > 0 ? `${errorCount} issues` : `${warningCount} notices`})
+          </Text>
+          {allWarnings.filter((w) => w.type === "error").length > 0 && (
+            <Alert title="Missing Required Data" variant="error">
+              {allWarnings.filter((w) => w.type === "error").map((w) => w.msg).join(", ")}
+            </Alert>
+          )}
+          {allWarnings.filter((w) => w.type === "warning").length > 0 && (
+            <Alert title="Warnings" variant="warning">
+              {allWarnings.filter((w) => w.type === "warning").map((w) => w.msg).join(", ")}
+            </Alert>
+          )}
+          {allWarnings.filter((w) => w.type === "info").length > 0 && (
+            <Alert title="Info" variant="info">
+              {allWarnings.filter((w) => w.type === "info").map((w) => w.msg).join(", ")}
+            </Alert>
+          )}
         </>
       )}
 
@@ -423,7 +466,7 @@ const ContractGenerator = ({ actions, context }) => {
         disabled={!canGenerate}
       >
         {canGenerate
-          ? `Generate Contract${allWarnings.length > 0 ? ` (${allWarnings.length} warnings)` : ""}`
+          ? `Generate Contract${warningCount > 0 ? ` (${warningCount} notices)` : ""}`
           : intakeRequired
             ? "Select an intake first"
             : "Loading..."}
