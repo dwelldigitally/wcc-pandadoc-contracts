@@ -555,7 +555,7 @@ def render_programs_tab():
                 disabled=not has_selection,
                 key="prog_edit",
             ):
-                edit_program_dialog(st.session_state["selected_program"])
+                edit_program_dialog(st.session_state.get("selected_program", {}))
         with b3:
             if st.button(
                 "\U0001f5d1\ufe0f Delete",
@@ -563,7 +563,7 @@ def render_programs_tab():
                 disabled=not has_selection,
                 key="prog_del",
             ):
-                delete_program_dialog(st.session_state["selected_program"])
+                delete_program_dialog(st.session_state.get("selected_program", {}))
 
     # Data table (read-only with selection)
     display_df = filter_dataframe(df, search) if not df.empty else df
@@ -912,7 +912,7 @@ def render_intakes_tab():
             disabled=not has_selection,
             key="int_edit",
         ):
-            edit_intake_dialog(st.session_state["selected_intake"])
+            edit_intake_dialog(st.session_state.get("selected_intake", {}))
     with b3:
         if st.button(
             "\U0001f5d1\ufe0f Delete",
@@ -920,7 +920,7 @@ def render_intakes_tab():
             disabled=not has_selection,
             key="int_del",
         ):
-            delete_intake_dialog(st.session_state["selected_intake"])
+            delete_intake_dialog(st.session_state.get("selected_intake", {}))
 
     if not programs:
         st.warning("Add programs first before managing intakes.")
@@ -1227,7 +1227,7 @@ def render_fees_tab():
             disabled=not has_selection,
             key="fee_edit",
         ):
-            edit_fee_dialog(st.session_state["selected_fee"])
+            edit_fee_dialog(st.session_state.get("selected_fee", {}))
     with b3:
         if st.button(
             "\U0001f5d1\ufe0f Delete",
@@ -1235,7 +1235,7 @@ def render_fees_tab():
             disabled=not has_selection,
             key="fee_del",
         ):
-            delete_fee_dialog(st.session_state["selected_fee"])
+            delete_fee_dialog(st.session_state.get("selected_fee", {}))
 
     if not programs:
         st.warning("Add programs first before managing fees.")
@@ -1479,7 +1479,7 @@ def render_outline_map_tab():
                 disabled=not has_selection,
                 key="outline_edit",
             ):
-                edit_outline_dialog(st.session_state["selected_outline"])
+                edit_outline_dialog(st.session_state.get("selected_outline", {}))
         with b3:
             if st.button(
                 "\U0001f5d1\ufe0f Delete",
@@ -1487,7 +1487,7 @@ def render_outline_map_tab():
                 disabled=not has_selection,
                 key="outline_del",
             ):
-                delete_outline_dialog(st.session_state["selected_outline"])
+                delete_outline_dialog(st.session_state.get("selected_outline", {}))
 
     display_df = filter_dataframe(df, search) if not df.empty else df
 
@@ -1746,27 +1746,15 @@ def main():
     # Custom CSS — theme-aware (no hardcoded text/background colors on main page)
     st.markdown("""
     <style>
-        /* Sidebar styling — always dark */
-        [data-testid="stSidebar"] {
-            background-color: #1E293B;
-        }
-        [data-testid="stSidebar"] .stMarkdown,
-        [data-testid="stSidebar"] .stMarkdown p,
-        [data-testid="stSidebar"] label,
-        [data-testid="stSidebar"] .stRadio label,
-        [data-testid="stSidebar"] .stButton button {
-            color: #F8FAFC !important;
-        }
+        /* Sidebar nav styling — theme-aware */
         [data-testid="stSidebar"] .stRadio > div[role="radiogroup"] > label {
-            color: #CBD5E1 !important;
             padding: 8px 12px;
             border-radius: 6px;
             margin-bottom: 2px;
             transition: background-color 0.15s ease;
         }
         [data-testid="stSidebar"] .stRadio > div[role="radiogroup"] > label:hover {
-            background-color: #334155;
-            color: #F8FAFC !important;
+            background-color: rgba(37, 99, 235, 0.1);
         }
         [data-testid="stSidebar"] .stRadio > div[role="radiogroup"] > label[data-checked="true"] {
             background-color: #2563EB;
@@ -1829,16 +1817,8 @@ def main():
 
     # --- Sidebar navigation ---
     with st.sidebar:
-        st.markdown(
-            '<h2 style="color:#F8FAFC;margin-bottom:0;padding-left:4px;">'
-            "WCC Contract Admin</h2>",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            '<p style="color:#94A3B8;font-size:13px;margin-top:4px;padding-left:4px;">'
-            "Data Management Dashboard</p>",
-            unsafe_allow_html=True,
-        )
+        st.markdown("## WCC Contract Admin")
+        st.caption("Data Management Dashboard")
 
         st.markdown("---")
 
@@ -1871,11 +1851,7 @@ def main():
             st.rerun()
 
         st.markdown("")
-        st.markdown(
-            '<p style="color:#64748B;font-size:11px;text-align:center;">'
-            "WCC Contract Generator v3.0</p>",
-            unsafe_allow_html=True,
-        )
+        st.caption("WCC Contract Generator v3.0")
 
     # --- Main content area ---
     icon = NAV_ICONS.get(selected_tab, "\U0001f4c4")
