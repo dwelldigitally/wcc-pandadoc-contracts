@@ -17,9 +17,9 @@ import {
 // Backend URL — update after deploying to Railway/Render
 const BACKEND_URL = "https://wcc-contract-generator-production.up.railway.app";
 // IMPORTANT: Set this to match WEBHOOK_SECRET env var on Railway
-const WEBHOOK_SECRET = "CHANGE_ME";
+const WEBHOOK_SECRET = "9da41df1ab58401682e2c69c91702e2d";
 
-hubspot.extend(({ actions }) => <ContractGenerator actions={actions} />);
+hubspot.extend(({ actions, context }) => <ContractGenerator actions={actions} context={context} />);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -37,7 +37,7 @@ const fmt = (amount) => {
 // Main Component
 // ---------------------------------------------------------------------------
 
-const ContractGenerator = ({ actions }) => {
+const ContractGenerator = ({ actions, context }) => {
   const { fetchCrmObjectProperties, onCrmPropertiesUpdate } = actions;
 
   const [dealProps, setDealProps] = useState(null);
@@ -168,7 +168,16 @@ const ContractGenerator = ({ actions }) => {
         const errData = await resp.json();
         throw new Error(errData.error || `HTTP ${resp.status}`);
       }
-      setResult(await resp.json());
+      const data = await resp.json();
+      setResult(data);
+      // Auto-open the PandaDoc document in a new tab
+      if (data.documentUrl) {
+        try {
+          actions.openInNewTab(data.documentUrl);
+        } catch (_) {
+          // Fallback: openInNewTab may not be available in all HubSpot versions
+        }
+      }
     } catch (err) {
       setError(err.message || "Failed to generate contract");
     } finally {

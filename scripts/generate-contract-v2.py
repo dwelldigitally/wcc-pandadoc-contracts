@@ -559,8 +559,6 @@ def fill_docx(template_path, output_path, contact, program, fees, amount_col, in
     if len(doc.tables) > 0:
         fill_student_info(doc.tables[0], contact)
 
-    # Table 1: Voluntary Disclosure — leave as-is (student fills)
-
     # Strip all dropdown controls and replace with plain text values
     replace_all_dropdowns(doc, contact, program, intake)
 
@@ -568,20 +566,35 @@ def fill_docx(template_path, output_path, contact, program, fees, amount_col, in
     if len(doc.tables) > 2:
         fill_program_info(doc.tables[2], program, intake, delivery_method=delivery_method)
 
-    # Tables 3-5: Program Outline, Work Experience, Regulatory — static
+    # Remove sections that are no longer in the contract body:
+    # - Table 1: Voluntary Disclosure (now in PandaDoc signing template)
+    # - Tables 3-5: Program Outline placeholder, Work Experience, Regulatory Requirement
+    #   (replaced by the actual program outline PDF added as a PandaDoc section)
+    # - Table 19: Signature table (handled by PandaDoc signing template)
+    # Remove in REVERSE order so indices don't shift
+    tables_to_remove = []
+    for idx in [19, 5, 4, 3, 1]:
+        if idx < len(doc.tables):
+            tables_to_remove.append(doc.tables[idx]._tbl)
+    for tbl_element in tables_to_remove:
+        parent = tbl_element.getparent()
+        if parent is not None:
+            parent.remove(tbl_element)
 
-    # Table 6: Program Costs
-    if len(doc.tables) > 6:
-        fill_fees_table(doc.tables[6], fees, amount_col)
-
-    # Tables 7-18: Payment Terms, Student Rights, Refund Policy, etc. — static
-
-    # Table 19: Remove the signature table entirely.
-    # The PandaDoc signing template handles signatures separately.
-    if len(doc.tables) > 19:
-        sig_table = doc.tables[19]
-        tbl_element = sig_table._tbl
-        tbl_element.getparent().remove(tbl_element)
+    # Table 6: Program Costs (index shifted after removals, find by content)
+    # After removing tables 1,3,4,5 the fees table moved. Find it by looking
+    # for the table whose first cell contains "PROGRAM COSTS" or similar.
+    fees_table = None
+    for t in doc.tables:
+        try:
+            first_cell_text = t.rows[0].cells[0].text.strip().upper()
+            if "PROGRAM COSTS" in first_cell_text or "COST" in first_cell_text:
+                fees_table = t
+                break
+        except (IndexError, AttributeError):
+            continue
+    if fees_table:
+        fill_fees_table(fees_table, fees, amount_col)
 
     # Save
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -884,7 +897,17 @@ def main():
     wait_for_document_draft(doc_id)
     print("   Document is draft, ready for sections.")
 
-    # Step 7: Add signing template as last section (with role mapping)
+    # Step 7: Add program outline PDF as section (between contract and signing page)
+    outline_map = load_outline_map()
+    outline_path = get_outline_path(outline_map, program_name)
+    if outline_path:
+        print(f"\n7. Adding program outline as section...")
+        add_section_from_file(doc_id, outline_path, section_name=f"Program Outline - {program_name}")
+        print(f"   Outline added: {outline_path.name}")
+    else:
+        print(f"\n7. No program outline found for '{program_name}' (skipping)")
+
+    # Step 8: Add signing template as last section (with role mapping)
     print(f"\n7. Adding signing page as section...")
     section_payload = {
         "template_uuid": SIGNING_TEMPLATE_ID,
@@ -914,8 +937,8 @@ def main():
     )
     print(f"   Signing page added: {signing_result.get('status', '?')}")
 
-    # Step 8: Link to HubSpot deal
-    print(f"\n8. Linking to HubSpot deal...")
+    # Step 9: Link to HubSpot deal
+    print(f"\n9. Linking to HubSpot deal...")
     link_to_hubspot(doc_id, deal_id)
 
     # Done
