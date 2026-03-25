@@ -3,7 +3,7 @@ WCC Contract Generator — Streamlit Admin Panel
 
 Dialog-based CRUD dashboard for Programs, Intakes, Fees, Outline Map.
 Uses @st.dialog modals for Add, Edit, and Delete operations with
-read-only data tables and row selection.
+read-only data tables. Edit/Delete dialogs contain row selection.
 
 Environment variables:
     ADMIN_PASSWORD              — Password for admin login
@@ -450,9 +450,23 @@ def add_program_dialog():
 
 
 @st.dialog("Edit Program")
-def edit_program_dialog(row_data):
-    """Dialog to edit an existing program."""
-    st.caption(f"Editing: {row_data['program_name']}")
+def edit_program_dialog():
+    """Dialog to edit an existing program. Row selection is inside the dialog."""
+    programs_df = read_sheet(SHEET_PROGRAMS)
+    expected_cols = ["program_name", "program_code", "credential"]
+    if programs_df.empty:
+        st.warning("No programs to edit.")
+        return
+    programs_df = ensure_columns(programs_df, expected_cols)
+
+    # Row picker inside the dialog
+    selected_name = st.selectbox(
+        "Select program to edit",
+        programs_df["program_name"].tolist(),
+    )
+    row_data = programs_df[programs_df["program_name"] == selected_name].iloc[0].to_dict()
+
+    st.divider()
 
     new_name = st.text_input("Program Name *", value=row_data.get("program_name", ""))
     new_code = st.text_input("Program Code *", value=row_data.get("program_code", ""))
@@ -483,8 +497,6 @@ def edit_program_dialog(row_data):
                     update_row(SHEET_PROGRAMS, idx, list(new_row.values()))
                     log_update(SHEET_PROGRAMS, row_data["program_name"], row_data, new_row)
                     invalidate_sheet_cache()
-                if "selected_program" in st.session_state:
-                    del st.session_state["selected_program"]
                 invalidate_sheet_cache()
                 st.rerun()
             else:
@@ -495,9 +507,24 @@ def edit_program_dialog(row_data):
 
 
 @st.dialog("Delete Program")
-def delete_program_dialog(row_data):
-    """Dialog to confirm deletion of a program."""
-    st.warning(f"Are you sure you want to delete **{row_data['program_name']}**?")
+def delete_program_dialog():
+    """Dialog to confirm deletion of a program. Row selection is inside the dialog."""
+    programs_df = read_sheet(SHEET_PROGRAMS)
+    expected_cols = ["program_name", "program_code", "credential"]
+    if programs_df.empty:
+        st.warning("No programs to delete.")
+        return
+    programs_df = ensure_columns(programs_df, expected_cols)
+
+    # Row picker inside the dialog
+    selected_name = st.selectbox(
+        "Select program to delete",
+        programs_df["program_name"].tolist(),
+    )
+    row_data = programs_df[programs_df["program_name"] == selected_name].iloc[0].to_dict()
+
+    st.divider()
+    st.error(f"Are you sure you want to delete **{selected_name}**?")
     st.markdown("This action cannot be undone.")
 
     for k, v in row_data.items():
@@ -512,8 +539,6 @@ def delete_program_dialog(row_data):
                     delete_row(SHEET_PROGRAMS, idx)
                     log_delete(SHEET_PROGRAMS, row_data["program_name"], row_data)
                     invalidate_sheet_cache()
-                if "selected_program" in st.session_state:
-                    del st.session_state["selected_program"]
                 invalidate_sheet_cache()
                 st.rerun()
             else:
@@ -551,6 +576,18 @@ def render_programs_tab():
     # Search
     search = render_search_bar("prog_search", "Search programs by name, code...")
 
+    # Action buttons
+    b1, b2, b3 = st.columns(3)
+    with b1:
+        if st.button("\u2795 Add", use_container_width=True, key="prog_add"):
+            add_program_dialog()
+    with b2:
+        if st.button("\u270f\ufe0f Edit", use_container_width=True, key="prog_edit", disabled=df.empty):
+            edit_program_dialog()
+    with b3:
+        if st.button("\U0001f5d1\ufe0f Delete", use_container_width=True, key="prog_del", disabled=df.empty):
+            delete_program_dialog()
+
     # Data table
     display_df = filter_dataframe(df, search) if not df.empty else df
 
@@ -558,34 +595,6 @@ def render_programs_tab():
         st.dataframe(display_df, use_container_width=True, hide_index=True)
     else:
         st.info("No programs found.")
-
-    # Row selector + action buttons
-    row_options = display_df["program_name"].tolist() if not display_df.empty else []
-    sel_col, b1, b2, b3 = st.columns([3, 1, 1, 1])
-    with sel_col:
-        selected_name = st.selectbox(
-            "Select a program",
-            [""] + row_options,
-            key="prog_select",
-            label_visibility="collapsed",
-            placeholder="Select a program to edit or delete...",
-        )
-    selected_row = None
-    if selected_name and not display_df.empty:
-        match = display_df[display_df["program_name"] == selected_name]
-        if not match.empty:
-            selected_row = match.iloc[0].to_dict()
-    with b1:
-        if st.button("➕ Add", use_container_width=True, key="prog_add"):
-            add_program_dialog()
-    with b2:
-        if st.button("✏️ Edit", use_container_width=True, disabled=selected_row is None, key="prog_edit"):
-            if selected_row:
-                edit_program_dialog(selected_row)
-    with b3:
-        if st.button("🗑️ Delete", use_container_width=True, disabled=selected_row is None, key="prog_del"):
-            if selected_row:
-                delete_program_dialog(selected_row)
 
     if not df.empty:
         st.caption(f"{len(display_df)} program{'s' if len(display_df) != 1 else ''} shown")
@@ -677,12 +686,33 @@ def add_intake_dialog():
 
 
 @st.dialog("Edit Intake")
-def edit_intake_dialog(row_data):
-    """Dialog to edit an existing intake."""
-    programs = get_program_names()
-    identifier = f"{row_data.get('program_name', '')} | {row_data.get('intake_date', '')} | {row_data.get('campus', '')}"
-    st.caption(f"Editing: {identifier}")
+def edit_intake_dialog():
+    """Dialog to edit an existing intake. Row selection is inside the dialog."""
+    intakes_df = read_sheet(SHEET_INTAKES)
+    expected_cols = [
+        "program_name", "intake_date", "end_date", "campus",
+        "hours", "weeks", "spots_available", "status",
+        "domestic_delivery_method", "international_delivery_method",
+    ]
+    if intakes_df.empty:
+        st.warning("No intakes to edit.")
+        return
+    intakes_df = ensure_columns(intakes_df, expected_cols)
 
+    # Row picker inside the dialog
+    def _intake_label(row):
+        return f"{row['program_name']} | {row['intake_date']} | {row['campus']}"
+
+    options = [_intake_label(intakes_df.iloc[i]) for i in range(len(intakes_df))]
+    selected_val = st.selectbox("Select intake to edit", options)
+
+    idx_in_df = options.index(selected_val)
+    row_data = intakes_df.iloc[idx_in_df].to_dict()
+    identifier = selected_val
+
+    st.divider()
+
+    programs = get_program_names()
     prog_index = (
         programs.index(row_data["program_name"])
         if row_data.get("program_name") in programs
@@ -787,8 +817,6 @@ def edit_intake_dialog(row_data):
                     update_row(SHEET_INTAKES, idx, list(new_row.values()))
                     log_update(SHEET_INTAKES, identifier, row_data, new_row)
                     invalidate_sheet_cache()
-                if "selected_intake" in st.session_state:
-                    del st.session_state["selected_intake"]
                 invalidate_sheet_cache()
                 st.rerun()
             else:
@@ -799,10 +827,32 @@ def edit_intake_dialog(row_data):
 
 
 @st.dialog("Delete Intake")
-def delete_intake_dialog(row_data):
-    """Dialog to confirm deletion of an intake."""
-    identifier = f"{row_data.get('program_name', '')} | {row_data.get('intake_date', '')} | {row_data.get('campus', '')}"
-    st.warning(f"Are you sure you want to delete this intake?\n\n**{identifier}**")
+def delete_intake_dialog():
+    """Dialog to confirm deletion of an intake. Row selection is inside the dialog."""
+    intakes_df = read_sheet(SHEET_INTAKES)
+    expected_cols = [
+        "program_name", "intake_date", "end_date", "campus",
+        "hours", "weeks", "spots_available", "status",
+        "domestic_delivery_method", "international_delivery_method",
+    ]
+    if intakes_df.empty:
+        st.warning("No intakes to delete.")
+        return
+    intakes_df = ensure_columns(intakes_df, expected_cols)
+
+    # Row picker inside the dialog
+    def _intake_label(row):
+        return f"{row['program_name']} | {row['intake_date']} | {row['campus']}"
+
+    options = [_intake_label(intakes_df.iloc[i]) for i in range(len(intakes_df))]
+    selected_val = st.selectbox("Select intake to delete", options)
+
+    idx_in_df = options.index(selected_val)
+    row_data = intakes_df.iloc[idx_in_df].to_dict()
+    identifier = selected_val
+
+    st.divider()
+    st.error(f"Are you sure you want to delete this intake?\n\n**{identifier}**")
     st.markdown("This action cannot be undone.")
 
     for k, v in row_data.items():
@@ -822,8 +872,6 @@ def delete_intake_dialog(row_data):
                     delete_row(SHEET_INTAKES, idx)
                     log_delete(SHEET_INTAKES, identifier, row_data)
                     invalidate_sheet_cache()
-                if "selected_intake" in st.session_state:
-                    del st.session_state["selected_intake"]
                 invalidate_sheet_cache()
                 st.rerun()
             else:
@@ -897,35 +945,8 @@ def render_intakes_tab():
     if not programs:
         st.warning("Add programs first before managing intakes.")
 
-    # Data table
-    if not display_df.empty:
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No intakes found.")
-
-    # Row selector + action buttons
-    def _intake_label(row):
-        return f"{row['program_name']} | {row['intake_date']} | {row['campus']}"
-
-    row_options = (
-        [_intake_label(display_df.iloc[i]) for i in range(len(display_df))]
-        if not display_df.empty else []
-    )
-    sel_col, b1, b2, b3 = st.columns([3, 1, 1, 1])
-    with sel_col:
-        selected_val = st.selectbox(
-            "Select an intake",
-            [""] + row_options,
-            key="int_select",
-            label_visibility="collapsed",
-            placeholder="Select an intake to edit or delete...",
-        )
-    selected_row = None
-    if selected_val and not display_df.empty:
-        for i in range(len(display_df)):
-            if _intake_label(display_df.iloc[i]) == selected_val:
-                selected_row = display_df.iloc[i].to_dict()
-                break
+    # Action buttons
+    b1, b2, b3 = st.columns(3)
     with b1:
         if st.button("\u2795 Add", use_container_width=True, key="int_add"):
             add_intake_dialog()
@@ -933,20 +954,24 @@ def render_intakes_tab():
         if st.button(
             "\u270f\ufe0f Edit",
             use_container_width=True,
-            disabled=selected_row is None,
+            disabled=df.empty,
             key="int_edit",
         ):
-            if selected_row:
-                edit_intake_dialog(selected_row)
+            edit_intake_dialog()
     with b3:
         if st.button(
             "\U0001f5d1\ufe0f Delete",
             use_container_width=True,
-            disabled=selected_row is None,
+            disabled=df.empty,
             key="int_del",
         ):
-            if selected_row:
-                delete_intake_dialog(selected_row)
+            delete_intake_dialog()
+
+    # Data table
+    if not display_df.empty:
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No intakes found.")
 
     if total > 0:
         st.caption(f"Showing {len(display_df)} of {total} intakes")
@@ -1018,12 +1043,32 @@ def add_fee_dialog():
 
 
 @st.dialog("Edit Fee")
-def edit_fee_dialog(row_data):
-    """Dialog to edit an existing fee."""
-    programs = get_program_names()
-    identifier = f"{row_data.get('program_name', '')} | {row_data.get('fee_name', '')}"
-    st.caption(f"Editing: {identifier}")
+def edit_fee_dialog():
+    """Dialog to edit an existing fee. Row selection is inside the dialog."""
+    fees_df = read_sheet(SHEET_FEES)
+    expected_cols = [
+        "program_name", "effective_from", "fee_name",
+        "domestic_amount", "international_amount", "is_tuition", "sort_order",
+    ]
+    if fees_df.empty:
+        st.warning("No fees to edit.")
+        return
+    fees_df = ensure_columns(fees_df, expected_cols)
 
+    # Row picker inside the dialog
+    def _fee_label(row):
+        return f"{row['program_name']} | {row['fee_name']} | {row['effective_from']}"
+
+    options = [_fee_label(fees_df.iloc[i]) for i in range(len(fees_df))]
+    selected_val = st.selectbox("Select fee to edit", options)
+
+    idx_in_df = options.index(selected_val)
+    row_data = fees_df.iloc[idx_in_df].to_dict()
+    identifier = f"{row_data.get('program_name', '')} | {row_data.get('fee_name', '')}"
+
+    st.divider()
+
+    programs = get_program_names()
     prog_index = (
         programs.index(row_data["program_name"])
         if row_data.get("program_name") in programs
@@ -1101,8 +1146,6 @@ def edit_fee_dialog(row_data):
                     update_row(SHEET_FEES, idx, list(new_row.values()))
                     log_update(SHEET_FEES, identifier, old_row, new_row)
                     invalidate_sheet_cache()
-                if "selected_fee" in st.session_state:
-                    del st.session_state["selected_fee"]
                 invalidate_sheet_cache()
                 st.rerun()
             else:
@@ -1113,10 +1156,31 @@ def edit_fee_dialog(row_data):
 
 
 @st.dialog("Delete Fee")
-def delete_fee_dialog(row_data):
-    """Dialog to confirm deletion of a fee."""
+def delete_fee_dialog():
+    """Dialog to confirm deletion of a fee. Row selection is inside the dialog."""
+    fees_df = read_sheet(SHEET_FEES)
+    expected_cols = [
+        "program_name", "effective_from", "fee_name",
+        "domestic_amount", "international_amount", "is_tuition", "sort_order",
+    ]
+    if fees_df.empty:
+        st.warning("No fees to delete.")
+        return
+    fees_df = ensure_columns(fees_df, expected_cols)
+
+    # Row picker inside the dialog
+    def _fee_label(row):
+        return f"{row['program_name']} | {row['fee_name']} | {row['effective_from']}"
+
+    options = [_fee_label(fees_df.iloc[i]) for i in range(len(fees_df))]
+    selected_val = st.selectbox("Select fee to delete", options)
+
+    idx_in_df = options.index(selected_val)
+    row_data = fees_df.iloc[idx_in_df].to_dict()
     identifier = f"{row_data.get('program_name', '')} | {row_data.get('fee_name', '')}"
-    st.warning(f"Are you sure you want to delete this fee?\n\n**{identifier}**")
+
+    st.divider()
+    st.error(f"Are you sure you want to delete this fee?\n\n**{identifier}**")
     st.markdown("This action cannot be undone.")
 
     for k, v in row_data.items():
@@ -1137,8 +1201,6 @@ def delete_fee_dialog(row_data):
                     delete_row(SHEET_FEES, idx)
                     log_delete(SHEET_FEES, identifier, clean)
                     invalidate_sheet_cache()
-                if "selected_fee" in st.session_state:
-                    del st.session_state["selected_fee"]
                 invalidate_sheet_cache()
                 st.rerun()
             else:
@@ -1205,35 +1267,8 @@ def render_fees_tab():
     if not programs:
         st.warning("Add programs first before managing fees.")
 
-    # Data table
-    if not display_df.empty:
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No fees found.")
-
-    # Row selector + action buttons
-    def _fee_label(row):
-        return f"{row['program_name']} | {row['fee_name']} | {row['effective_from']}"
-
-    row_options = (
-        [_fee_label(display_df.iloc[i]) for i in range(len(display_df))]
-        if not display_df.empty else []
-    )
-    sel_col, b1, b2, b3 = st.columns([3, 1, 1, 1])
-    with sel_col:
-        selected_val = st.selectbox(
-            "Select a fee",
-            [""] + row_options,
-            key="fee_select",
-            label_visibility="collapsed",
-            placeholder="Select a fee to edit or delete...",
-        )
-    selected_row = None
-    if selected_val and not display_df.empty:
-        for i in range(len(display_df)):
-            if _fee_label(display_df.iloc[i]) == selected_val:
-                selected_row = display_df.iloc[i].to_dict()
-                break
+    # Action buttons
+    b1, b2, b3 = st.columns(3)
     with b1:
         if st.button("\u2795 Add", use_container_width=True, key="fee_add"):
             add_fee_dialog()
@@ -1241,20 +1276,24 @@ def render_fees_tab():
         if st.button(
             "\u270f\ufe0f Edit",
             use_container_width=True,
-            disabled=selected_row is None,
+            disabled=df.empty,
             key="fee_edit",
         ):
-            if selected_row:
-                edit_fee_dialog(selected_row)
+            edit_fee_dialog()
     with b3:
         if st.button(
             "\U0001f5d1\ufe0f Delete",
             use_container_width=True,
-            disabled=selected_row is None,
+            disabled=df.empty,
             key="fee_del",
         ):
-            if selected_row:
-                delete_fee_dialog(selected_row)
+            delete_fee_dialog()
+
+    # Data table
+    if not display_df.empty:
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No fees found.")
 
     if total > 0:
         st.caption(f"Showing {len(display_df)} of {total} fee rows")
@@ -1317,11 +1356,25 @@ def add_outline_dialog():
 
 
 @st.dialog("Edit Outline Mapping")
-def edit_outline_dialog(row_data):
-    """Dialog to edit an existing outline mapping."""
-    programs = get_program_names()
-    st.caption(f"Editing: {row_data.get('program_name', '')}")
+def edit_outline_dialog():
+    """Dialog to edit an existing outline mapping. Row selection is inside the dialog."""
+    outline_df = read_sheet(SHEET_OUTLINE_MAP)
+    expected_cols = ["program_name", "outline_filename", "google_drive_file_id"]
+    if outline_df.empty:
+        st.warning("No outline mappings to edit.")
+        return
+    outline_df = ensure_columns(outline_df, expected_cols)
 
+    # Row picker inside the dialog
+    selected_name = st.selectbox(
+        "Select outline mapping to edit",
+        outline_df["program_name"].tolist(),
+    )
+    row_data = outline_df[outline_df["program_name"] == selected_name].iloc[0].to_dict()
+
+    st.divider()
+
+    programs = get_program_names()
     prog_index = (
         programs.index(row_data["program_name"])
         if row_data.get("program_name") in programs
@@ -1362,8 +1415,6 @@ def edit_outline_dialog(row_data):
                         new_row,
                     )
                     invalidate_sheet_cache()
-                if "selected_outline" in st.session_state:
-                    del st.session_state["selected_outline"]
                 invalidate_sheet_cache()
                 st.rerun()
             else:
@@ -1374,11 +1425,26 @@ def edit_outline_dialog(row_data):
 
 
 @st.dialog("Delete Outline Mapping")
-def delete_outline_dialog(row_data):
-    """Dialog to confirm deletion of an outline mapping."""
-    st.warning(
+def delete_outline_dialog():
+    """Dialog to confirm deletion of an outline mapping. Row selection is inside the dialog."""
+    outline_df = read_sheet(SHEET_OUTLINE_MAP)
+    expected_cols = ["program_name", "outline_filename", "google_drive_file_id"]
+    if outline_df.empty:
+        st.warning("No outline mappings to delete.")
+        return
+    outline_df = ensure_columns(outline_df, expected_cols)
+
+    # Row picker inside the dialog
+    selected_name = st.selectbox(
+        "Select outline mapping to delete",
+        outline_df["program_name"].tolist(),
+    )
+    row_data = outline_df[outline_df["program_name"] == selected_name].iloc[0].to_dict()
+
+    st.divider()
+    st.error(
         f"Are you sure you want to delete the outline mapping for "
-        f"**{row_data.get('program_name', '')}**?"
+        f"**{selected_name}**?"
     )
     st.markdown("This action cannot be undone.")
 
@@ -1397,8 +1463,6 @@ def delete_outline_dialog(row_data):
                     delete_row(SHEET_OUTLINE_MAP, idx)
                     log_delete(SHEET_OUTLINE_MAP, row_data["program_name"], clean)
                     invalidate_sheet_cache()
-                if "selected_outline" in st.session_state:
-                    del st.session_state["selected_outline"]
                 invalidate_sheet_cache()
                 st.rerun()
             else:
@@ -1444,6 +1508,32 @@ def render_outline_map_tab():
     # Search
     search = render_search_bar("outline_search", "Search outline mappings...")
 
+    if not programs:
+        st.warning("Add programs first before managing outline mappings.")
+
+    # Action buttons
+    b1, b2, b3 = st.columns(3)
+    with b1:
+        if st.button("\u2795 Add", use_container_width=True, key="outline_add"):
+            add_outline_dialog()
+    with b2:
+        if st.button(
+            "\u270f\ufe0f Edit",
+            use_container_width=True,
+            disabled=df.empty,
+            key="outline_edit",
+        ):
+            edit_outline_dialog()
+    with b3:
+        if st.button(
+            "\U0001f5d1\ufe0f Delete",
+            use_container_width=True,
+            disabled=df.empty,
+            key="outline_del",
+        ):
+            delete_outline_dialog()
+
+    # Data table
     display_df = filter_dataframe(df, search) if not df.empty else df
 
     # Add preview link column for display
@@ -1456,52 +1546,10 @@ def render_outline_map_tab():
     else:
         display_with_links["preview_link"] = ""
 
-    if not programs:
-        st.warning("Add programs first before managing outline mappings.")
-
-    # Data table
     if not display_with_links.empty:
         st.dataframe(display_with_links, use_container_width=True, hide_index=True)
     else:
         st.info("No outline mappings found.")
-
-    # Row selector + action buttons
-    row_options = display_df["program_name"].tolist() if not display_df.empty else []
-    sel_col, b1, b2, b3 = st.columns([3, 1, 1, 1])
-    with sel_col:
-        selected_val = st.selectbox(
-            "Select an outline mapping",
-            [""] + row_options,
-            key="outline_select",
-            label_visibility="collapsed",
-            placeholder="Select a mapping to edit or delete...",
-        )
-    selected_row = None
-    if selected_val and not display_df.empty:
-        match = display_df[display_df["program_name"] == selected_val]
-        if not match.empty:
-            selected_row = match.iloc[0].to_dict()
-    with b1:
-        if st.button("\u2795 Add", use_container_width=True, key="outline_add"):
-            add_outline_dialog()
-    with b2:
-        if st.button(
-            "\u270f\ufe0f Edit",
-            use_container_width=True,
-            disabled=selected_row is None,
-            key="outline_edit",
-        ):
-            if selected_row:
-                edit_outline_dialog(selected_row)
-    with b3:
-        if st.button(
-            "\U0001f5d1\ufe0f Delete",
-            use_container_width=True,
-            disabled=selected_row is None,
-            key="outline_del",
-        ):
-            if selected_row:
-                delete_outline_dialog(selected_row)
 
     if total_mappings > 0:
         st.caption(f"Showing {len(display_df)} of {total_mappings} mappings")
