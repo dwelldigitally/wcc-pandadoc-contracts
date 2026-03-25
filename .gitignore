@@ -42,3 +42,6 @@ pandadoc-*.png
 v2-*.png
 signing-template.png
 card-library-search.png
+
+# Streamlit secrets
+.streamlit/

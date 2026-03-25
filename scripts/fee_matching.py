@@ -12,6 +12,14 @@ Fee matching rule:
 
 from datetime import datetime
 
+DOMESTIC_STATUSES = ["canadian citizen", "permanent resident", "refugee", "citizen/pr"]
+
+
+def is_domestic(status):
+    if not status:
+        return None
+    return status.lower().strip() in DOMESTIC_STATUSES
+
 
 def parse_date(date_str):
     """Parse a YYYY-MM-DD string to a date object. Returns None on failure."""

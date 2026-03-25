@@ -28,7 +28,7 @@ import time
 import urllib.request
 import urllib.error
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from lxml import etree
 
@@ -36,7 +36,7 @@ from docx import Document
 from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-from fee_matching import match_fees, resolve_fee_amounts
+from fee_matching import match_fees, resolve_fee_amounts, is_domestic, DOMESTIC_STATUSES
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -65,10 +65,6 @@ HUBSPOT_BASE_URL = "https://api.hubapi.com"
 GOOGLE_SHEETS_ID = os.environ.get("GOOGLE_SHEETS_ID", "")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 
-DOMESTIC_STATUSES = [
-    "canadian citizen", "permanent resident", "refugee", "citizen/pr"
-]
-
 INSTITUTION = {
     "name": "Western Community College Inc.",
     "address": "#201 8313 120th Street, Surrey, BC V3W 3N4",
@@ -85,7 +81,7 @@ def api_get(url, token, token_type="Bearer"):
     req.add_header("Authorization", f"{token_type} {token}")
     req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         err_body = e.read().decode() if e.fp else ""
@@ -98,7 +94,7 @@ def api_post(url, data, token, token_type="Bearer", content_type="application/js
     req.add_header("Authorization", f"{token_type} {token}")
     req.add_header("Content-Type", content_type)
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         err_body = e.read().decode() if e.fp else ""
@@ -129,7 +125,7 @@ def api_post_multipart(url, fields, files, token, token_type="API-Key"):
     req.add_header("Authorization", f"{token_type} {token}")
     req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         err_body = e.read().decode() if e.fp else ""
@@ -244,32 +240,11 @@ def get_deal_data(deal_id):
 # Lookups
 # ---------------------------------------------------------------------------
 
-def is_domestic(residence_status):
-    if not residence_status:
-        return None  # Unknown — must be set before generating contract
-    return residence_status.lower() in DOMESTIC_STATUSES
-
-
 def lookup_program(programs, name):
     for p in programs:
         if p["program_name"].lower() == name.lower():
             return p
     return None
-
-
-def lookup_fees(fees, name, domestic):
-    amount_col = "domestic_amount" if domestic else "international_amount"
-    result = [
-        f for f in fees
-        if f["program_name"].lower() == name.lower()
-    ]
-    def safe_sort_order(x):
-        try:
-            return int(x.get("sort_order") or 0)
-        except (ValueError, TypeError):
-            return 0
-    result.sort(key=safe_sort_order)
-    return result, amount_col
 
 
 def lookup_next_intake(intakes, name):
@@ -677,7 +652,7 @@ def split_docx_at_fees(docx_path):
 # PandaDoc — Create from template + add sections
 # ---------------------------------------------------------------------------
 
-SIGNING_TEMPLATE_ID = "DsoTNroxu5qX332aioZVjK"
+SIGNING_TEMPLATE_ID = os.environ.get("PANDADOC_SIGNING_TEMPLATE_ID", "DsoTNroxu5qX332aioZVjK")
 OUTLINE_MAP_PATH = DATA_DIR / "program-outline-map.csv"
 OUTLINE_CACHE_DIR = Path("/tmp/outlines")
 
@@ -708,6 +683,10 @@ def download_outline_from_drive(file_id, api_key):
     Caches downloaded files in /tmp/outlines/{file_id}.pdf to avoid re-downloading.
     Returns the local file path on success, or None on failure.
     """
+    if not re.match(r'^[A-Za-z0-9_-]{10,60}$', file_id):
+        print(f"  Invalid file_id format: {file_id}")
+        return None
+
     OUTLINE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cached_path = OUTLINE_CACHE_DIR / f"{file_id}.pdf"
 

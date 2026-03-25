@@ -30,7 +30,7 @@ PST = timezone(timedelta(hours=-7))
 SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from fee_matching import match_fees, resolve_fee_amounts
+from fee_matching import match_fees, resolve_fee_amounts, is_domestic, DOMESTIC_STATUSES
 
 DATA_DIR = SCRIPT_DIR.parent / "data"
 
@@ -48,10 +48,6 @@ PORT = int(os.environ.get("PORT", 3000))
 GOOGLE_SHEETS_ID = require_env("GOOGLE_SHEETS_ID")
 GOOGLE_API_KEY = require_env("GOOGLE_API_KEY")
 WEBHOOK_SECRET = require_env("WEBHOOK_SECRET")
-
-DOMESTIC_STATUSES = [
-    "canadian citizen", "permanent resident", "refugee", "citizen/pr"
-]
 
 # Contact properties to fetch from HubSpot
 CONTACT_PROPERTIES = [
@@ -131,6 +127,7 @@ def fetch_google_sheet_tab(tab_name):
 def load_all_data():
     """Load Programs, Fees, and Outline Map from Google Sheets or CSV.
 
+    Returns a single dict for atomic swap.
     Intakes are fetched live per request (they change frequently).
     """
     programs, fees, outline_map = [], [], {}
@@ -151,7 +148,7 @@ def load_all_data():
             except Exception:
                 pass
             print(f"  Loaded from Google Sheets: {len(programs)} programs, {len(fees)} fees, {len(outline_map)} outlines")
-            return programs, fees, outline_map
+            return {"programs": programs, "fees": fees, "outline_map": outline_map}
         except Exception as e:
             print(f"  Google Sheets failed ({e}), falling back to local CSV")
 
@@ -168,25 +165,19 @@ def load_all_data():
                     "google_drive_file_id": drive_id,
                 }
     print(f"  Loaded from local CSV: {len(programs)} programs, {len(fees)} fees, {len(outline_map)} outlines")
-    return programs, fees, outline_map
+    return {"programs": programs, "fees": fees, "outline_map": outline_map}
 
 
 try:
-    PROGRAMS, FEES, OUTLINE_MAP = load_all_data()
+    _DATA = load_all_data()
 except Exception as e:
     print(f"WARNING: Failed to load data at startup: {e}")
-    PROGRAMS, FEES, OUTLINE_MAP = [], [], {}
+    _DATA = {"programs": [], "fees": [], "outline_map": {}}
 
 
 # ---------------------------------------------------------------------------
 # Core logic
 # ---------------------------------------------------------------------------
-
-def is_domestic(status):
-    if not status:
-        return None
-    return status.lower().strip() in DOMESTIC_STATUSES
-
 
 def fetch_intakes_live(program_name):
     """Fetch intakes from Google Sheets (live, not cached). Returns all open future intakes."""
@@ -281,7 +272,7 @@ def get_program_data(program_name, residence_status, intake_date=None, contact=N
 
     # Find program
     program = None
-    for p in PROGRAMS:
+    for p in _DATA["programs"]:
         if p["program_name"].lower() == program_name.lower():
             program = p
             break
@@ -301,11 +292,11 @@ def get_program_data(program_name, residence_status, intake_date=None, contact=N
 
     # Fee matching: use intake_date if provided, otherwise today
     reference_date = intake_date or datetime.now(PST).strftime("%Y-%m-%d")
-    matched_fees, effective_from = match_fees(FEES, program_name, reference_date)
+    matched_fees, effective_from = match_fees(_DATA["fees"], program_name, reference_date)
     fee_items, total = resolve_fee_amounts(matched_fees, domestic)
 
     # Outline check — requires a Google Drive file ID
-    outline_entry = OUTLINE_MAP.get(program_name.lower())
+    outline_entry = _DATA["outline_map"].get(program_name.lower())
     has_outline = bool(outline_entry and outline_entry.get("google_drive_file_id"))
 
     return {
@@ -355,9 +346,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 "status": "ok",
                 "service": "wcc-contract-generator",
                 "schema": "v2",
-                "programs": len(PROGRAMS),
-                "feeItems": len(FEES),
-                "outlines": len(OUTLINE_MAP),
+                "programs": len(_DATA["programs"]),
+                "feeItems": len(_DATA["fees"]),
+                "outlines": len(_DATA["outline_map"]),
             })
             return
 
@@ -408,11 +399,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "Unauthorized"}, 401)
                 return
 
-            global PROGRAMS, FEES, OUTLINE_MAP
-            old_counts = (len(PROGRAMS), len(FEES), len(OUTLINE_MAP))
+            global _DATA
+            old_counts = (len(_DATA["programs"]), len(_DATA["fees"]), len(_DATA["outline_map"]))
             try:
-                PROGRAMS, FEES, OUTLINE_MAP = load_all_data()
-                new_counts = (len(PROGRAMS), len(FEES), len(OUTLINE_MAP))
+                _DATA = load_all_data()  # single reference swap is atomic in CPython
+                new_counts = (len(_DATA["programs"]), len(_DATA["fees"]), len(_DATA["outline_map"]))
                 print(f"Data reloaded: programs {old_counts[0]}->{new_counts[0]}, fees {old_counts[1]}->{new_counts[1]}, outlines {old_counts[2]}->{new_counts[2]}")
                 self.send_json({
                     "status": "reloaded",
@@ -422,7 +413,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 })
             except Exception as e:
                 print(f"Reload failed: {e}")
-                self.send_json({"error": f"Reload failed: {e}"}, 500)
+                self.send_json({"error": "Reload failed. Check server logs."}, 500)
             return
 
         # --- /generate ---
@@ -560,9 +551,9 @@ def main():
     server = ThreadingHTTPServer(("0.0.0.0", PORT), RequestHandler)
     print(f"WCC Contract Generator Backend (v2)")
     print(f"  Listening on port {PORT}")
-    print(f"  Programs: {len(PROGRAMS)}")
-    print(f"  Fee items: {len(FEES)}")
-    print(f"  Outline mappings: {len(OUTLINE_MAP)}")
+    print(f"  Programs: {len(_DATA['programs'])}")
+    print(f"  Fee items: {len(_DATA['fees'])}")
+    print(f"  Outline mappings: {len(_DATA['outline_map'])}")
     print(f"")
     print(f"Endpoints:")
     print(f"  GET  /health          Health check + data counts")

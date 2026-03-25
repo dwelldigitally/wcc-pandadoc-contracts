@@ -318,9 +318,8 @@ def filter_dataframe(df: pd.DataFrame, search_text: str) -> pd.DataFrame:
         return df
     query = search_text.strip().lower()
     mask = df.apply(
-        lambda row: any(query in str(val).lower() for val in row),
-        axis=1,
-    )
+        lambda col: col.astype(str).str.lower().str.contains(query, regex=False),
+    ).any(axis=1)
     return df[mask]
 
 
@@ -330,9 +329,26 @@ def filter_dataframe(df: pd.DataFrame, search_text: str) -> pd.DataFrame:
 
 
 def check_auth():
-    """Simple password-based authentication."""
+    """Password-based authentication with brute-force protection."""
     if st.session_state.get("authenticated"):
         return True
+
+    # Brute-force protection
+    if "login_attempts" not in st.session_state:
+        st.session_state["login_attempts"] = 0
+    if "lockout_until" not in st.session_state:
+        st.session_state["lockout_until"] = None
+
+    # Check lockout
+    if st.session_state["lockout_until"]:
+        remaining = (st.session_state["lockout_until"] - datetime.now()).total_seconds()
+        if remaining > 0:
+            st.title("WCC Admin")
+            st.error(f"Too many failed attempts. Try again in {int(remaining)} seconds.")
+            return False
+        else:
+            st.session_state["lockout_until"] = None
+            st.session_state["login_attempts"] = 0
 
     st.markdown(
         '<div style="display:flex;justify-content:center;padding-top:60px;">'
@@ -360,10 +376,18 @@ def check_auth():
             return False
         if password == expected:
             st.session_state["authenticated"] = True
+            st.session_state["login_attempts"] = 0
             invalidate_sheet_cache()
             st.rerun()
         else:
-            st.error("Incorrect password.")
+            st.session_state["login_attempts"] += 1
+            attempts_left = 5 - st.session_state["login_attempts"]
+            if st.session_state["login_attempts"] >= 5:
+                from datetime import timedelta as td
+                st.session_state["lockout_until"] = datetime.now() + td(minutes=5)
+                st.error("Too many failed attempts. Locked out for 5 minutes.")
+            else:
+                st.error(f"Incorrect password. {attempts_left} attempts remaining.")
     st.markdown("</div></div>", unsafe_allow_html=True)
     return False
 
@@ -441,7 +465,6 @@ def add_program_dialog():
                     "program_code": code.strip(),
                     "credential": credential,
                 })
-                invalidate_sheet_cache()
             invalidate_sheet_cache()
             st.rerun()
     with col2:
@@ -496,7 +519,6 @@ def edit_program_dialog():
                 with st.spinner("Saving..."):
                     update_row(SHEET_PROGRAMS, idx, list(new_row.values()))
                     log_update(SHEET_PROGRAMS, row_data["program_name"], row_data, new_row)
-                    invalidate_sheet_cache()
                 invalidate_sheet_cache()
                 st.rerun()
             else:
@@ -538,7 +560,6 @@ def delete_program_dialog():
                 with st.spinner("Deleting..."):
                     delete_row(SHEET_PROGRAMS, idx)
                     log_delete(SHEET_PROGRAMS, row_data["program_name"], row_data)
-                    invalidate_sheet_cache()
                 invalidate_sheet_cache()
                 st.rerun()
             else:
@@ -677,7 +698,6 @@ def add_intake_dialog():
             with st.spinner("Saving..."):
                 append_row(SHEET_INTAKES, row_values)
                 log_create(SHEET_INTAKES, identifier, field_dict)
-                invalidate_sheet_cache()
             invalidate_sheet_cache()
             st.rerun()
     with col2:
@@ -816,7 +836,6 @@ def edit_intake_dialog():
                 with st.spinner("Saving..."):
                     update_row(SHEET_INTAKES, idx, list(new_row.values()))
                     log_update(SHEET_INTAKES, identifier, row_data, new_row)
-                    invalidate_sheet_cache()
                 invalidate_sheet_cache()
                 st.rerun()
             else:
@@ -871,7 +890,6 @@ def delete_intake_dialog():
                 with st.spinner("Deleting..."):
                     delete_row(SHEET_INTAKES, idx)
                     log_delete(SHEET_INTAKES, identifier, row_data)
-                    invalidate_sheet_cache()
                 invalidate_sheet_cache()
                 st.rerun()
             else:
@@ -993,7 +1011,7 @@ def add_fee_dialog():
         return
 
     program_name = st.selectbox("Program *", programs)
-    effective_from = st.text_input("Effective From", placeholder="e.g. 2025-01-01")
+    effective_from = st.date_input("Effective From")
     fee_name = st.selectbox("Fee Name *", FEE_NAME_OPTIONS)
 
     a1, a2 = st.columns(2)
@@ -1014,7 +1032,7 @@ def add_fee_dialog():
         if st.button("Save", type="primary", use_container_width=True):
             row_values = [
                 program_name,
-                effective_from.strip(),
+                str(effective_from),
                 fee_name,
                 str(domestic_amount),
                 str(international_amount),
@@ -1023,7 +1041,7 @@ def add_fee_dialog():
             ]
             field_dict = {
                 "program_name": program_name,
-                "effective_from": effective_from.strip(),
+                "effective_from": str(effective_from),
                 "fee_name": fee_name,
                 "domestic_amount": str(domestic_amount),
                 "international_amount": str(international_amount),
@@ -1034,7 +1052,6 @@ def add_fee_dialog():
             with st.spinner("Saving..."):
                 append_row(SHEET_FEES, row_values)
                 log_create(SHEET_FEES, identifier, field_dict)
-                invalidate_sheet_cache()
             invalidate_sheet_cache()
             st.rerun()
     with col2:
@@ -1145,7 +1162,6 @@ def edit_fee_dialog():
                 with st.spinner("Saving..."):
                     update_row(SHEET_FEES, idx, list(new_row.values()))
                     log_update(SHEET_FEES, identifier, old_row, new_row)
-                    invalidate_sheet_cache()
                 invalidate_sheet_cache()
                 st.rerun()
             else:
@@ -1200,7 +1216,6 @@ def delete_fee_dialog():
                 with st.spinner("Deleting..."):
                     delete_row(SHEET_FEES, idx)
                     log_delete(SHEET_FEES, identifier, clean)
-                    invalidate_sheet_cache()
                 invalidate_sheet_cache()
                 st.rerun()
             else:
@@ -1347,7 +1362,6 @@ def add_outline_dialog():
             with st.spinner("Saving..."):
                 append_row(SHEET_OUTLINE_MAP, row_values)
                 log_create(SHEET_OUTLINE_MAP, program_name, field_dict)
-                invalidate_sheet_cache()
             invalidate_sheet_cache()
             st.rerun()
     with col2:
@@ -1414,7 +1428,6 @@ def edit_outline_dialog():
                         row_data,
                         new_row,
                     )
-                    invalidate_sheet_cache()
                 invalidate_sheet_cache()
                 st.rerun()
             else:
@@ -1462,7 +1475,6 @@ def delete_outline_dialog():
                 with st.spinner("Deleting..."):
                     delete_row(SHEET_OUTLINE_MAP, idx)
                     log_delete(SHEET_OUTLINE_MAP, row_data["program_name"], clean)
-                    invalidate_sheet_cache()
                 invalidate_sheet_cache()
                 st.rerun()
             else:
