@@ -18,6 +18,7 @@ from datetime import datetime, date
 import gspread
 import pandas as pd
 import streamlit as st
+from itables.streamlit import interactive_table
 from oauth2client.service_account import ServiceAccountCredentials
 
 # ---------------------------------------------------------------------------
@@ -551,57 +552,48 @@ def render_programs_tab():
     # Search
     search = render_search_bar("prog_search", "Search programs by name, code...")
 
-    # Data table (read-only with selection)
+    # Data table
     display_df = filter_dataframe(df, search) if not df.empty else df
 
-    event = st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="prog_table",
-        column_config={
-            "program_name": st.column_config.TextColumn("Program Name", width="large"),
-            "program_code": st.column_config.TextColumn("Program Code"),
-            "credential": st.column_config.TextColumn("Credential"),
-        },
-    )
-
-    # Track selection
-    if event and event.selection and event.selection.rows:
-        selected_idx = event.selection.rows[0]
-        st.session_state["selected_program"] = display_df.iloc[selected_idx].to_dict()
+    if not display_df.empty:
+        interactive_table(
+            display_df,
+            paging=len(display_df) > 20,
+            searching=False,
+            ordering=True,
+            classes="display compact",
+            lengthMenu=[20, 50, 100],
+        )
     else:
-        if "selected_program" in st.session_state:
-            del st.session_state["selected_program"]
+        st.info("No programs found.")
 
-    # Action buttons AFTER table (so selection is already processed)
-    has_selection = "selected_program" in st.session_state
-    b1, b2, b3, b4 = st.columns([1, 1, 1, 2])
+    # Row selector + action buttons
+    row_options = display_df["program_name"].tolist() if not display_df.empty else []
+    sel_col, b1, b2, b3 = st.columns([3, 1, 1, 1])
+    with sel_col:
+        selected_name = st.selectbox(
+            "Select a program",
+            [""] + row_options,
+            key="prog_select",
+            label_visibility="collapsed",
+            placeholder="Select a program to edit or delete...",
+        )
+    selected_row = None
+    if selected_name and not display_df.empty:
+        match = display_df[display_df["program_name"] == selected_name]
+        if not match.empty:
+            selected_row = match.iloc[0].to_dict()
     with b1:
         if st.button("➕ Add", use_container_width=True, key="prog_add"):
             add_program_dialog()
     with b2:
-        if st.button(
-            "✏️ Edit",
-            use_container_width=True,
-            disabled=not has_selection,
-            key="prog_edit",
-        ):
-            edit_program_dialog(st.session_state.get("selected_program", {}))
+        if st.button("✏️ Edit", use_container_width=True, disabled=selected_row is None, key="prog_edit"):
+            if selected_row:
+                edit_program_dialog(selected_row)
     with b3:
-        if st.button(
-            "🗑️ Delete",
-            use_container_width=True,
-            disabled=not has_selection,
-            key="prog_del",
-        ):
-            delete_program_dialog(st.session_state.get("selected_program", {}))
-    with b4:
-        if has_selection:
-            sel = st.session_state["selected_program"]
-            st.info(f"Selected: **{sel['program_name']}**")
+        if st.button("🗑️ Delete", use_container_width=True, disabled=selected_row is None, key="prog_del"):
+            if selected_row:
+                delete_program_dialog(selected_row)
 
     if not df.empty:
         st.caption(f"{len(display_df)} program{'s' if len(display_df) != 1 else ''} shown")
@@ -913,39 +905,42 @@ def render_intakes_tab():
     if not programs:
         st.warning("Add programs first before managing intakes.")
 
-    # Data table (read-only with selection)
-    event = st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="int_table",
-        column_config={
-            "program_name": st.column_config.TextColumn("Program", width="large"),
-            "intake_date": st.column_config.TextColumn("Intake Date"),
-            "end_date": st.column_config.TextColumn("End Date"),
-            "campus": st.column_config.TextColumn("Campus"),
-            "hours": st.column_config.TextColumn("Hours"),
-            "weeks": st.column_config.TextColumn("Weeks"),
-            "spots_available": st.column_config.NumberColumn("Spots", min_value=0),
-            "status": st.column_config.TextColumn("Status"),
-            "domestic_delivery_method": st.column_config.TextColumn("Dom. Delivery"),
-            "international_delivery_method": st.column_config.TextColumn("Intl. Delivery"),
-        },
-    )
-
-    # Track selection
-    if event and event.selection and event.selection.rows:
-        selected_idx = event.selection.rows[0]
-        st.session_state["selected_intake"] = display_df.iloc[selected_idx].to_dict()
+    # Data table
+    if not display_df.empty:
+        interactive_table(
+            display_df,
+            paging=len(display_df) > 20,
+            searching=False,
+            ordering=True,
+            classes="display compact",
+            lengthMenu=[20, 50, 100],
+        )
     else:
-        if "selected_intake" in st.session_state:
-            del st.session_state["selected_intake"]
+        st.info("No intakes found.")
 
-    # Action buttons AFTER table (so selection is already processed)
-    has_selection = "selected_intake" in st.session_state
-    b1, b2, b3, b4 = st.columns([1, 1, 1, 2])
+    # Row selector + action buttons
+    def _intake_label(row):
+        return f"{row['program_name']} | {row['intake_date']} | {row['campus']}"
+
+    row_options = (
+        [_intake_label(display_df.iloc[i]) for i in range(len(display_df))]
+        if not display_df.empty else []
+    )
+    sel_col, b1, b2, b3 = st.columns([3, 1, 1, 1])
+    with sel_col:
+        selected_val = st.selectbox(
+            "Select an intake",
+            [""] + row_options,
+            key="int_select",
+            label_visibility="collapsed",
+            placeholder="Select an intake to edit or delete...",
+        )
+    selected_row = None
+    if selected_val and not display_df.empty:
+        for i in range(len(display_df)):
+            if _intake_label(display_df.iloc[i]) == selected_val:
+                selected_row = display_df.iloc[i].to_dict()
+                break
     with b1:
         if st.button("\u2795 Add", use_container_width=True, key="int_add"):
             add_intake_dialog()
@@ -953,25 +948,20 @@ def render_intakes_tab():
         if st.button(
             "\u270f\ufe0f Edit",
             use_container_width=True,
-            disabled=not has_selection,
+            disabled=selected_row is None,
             key="int_edit",
         ):
-            edit_intake_dialog(st.session_state.get("selected_intake", {}))
+            if selected_row:
+                edit_intake_dialog(selected_row)
     with b3:
         if st.button(
             "\U0001f5d1\ufe0f Delete",
             use_container_width=True,
-            disabled=not has_selection,
+            disabled=selected_row is None,
             key="int_del",
         ):
-            delete_intake_dialog(st.session_state.get("selected_intake", {}))
-    with b4:
-        if has_selection:
-            sel = st.session_state["selected_intake"]
-            st.info(
-                f"Selected: **{sel['program_name']}** | "
-                f"{sel['intake_date']} | {sel['campus']}"
-            )
+            if selected_row:
+                delete_intake_dialog(selected_row)
 
     if total > 0:
         st.caption(f"Showing {len(display_df)} of {total} intakes")
@@ -1230,40 +1220,42 @@ def render_fees_tab():
     if not programs:
         st.warning("Add programs first before managing fees.")
 
-    # Data table (read-only with selection)
-    event = st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="fee_table",
-        column_config={
-            "program_name": st.column_config.TextColumn("Program", width="large"),
-            "effective_from": st.column_config.TextColumn("Effective From"),
-            "fee_name": st.column_config.TextColumn("Fee Name"),
-            "domestic_amount": st.column_config.NumberColumn(
-                "Domestic $", format="$%.2f",
-            ),
-            "international_amount": st.column_config.NumberColumn(
-                "International $", format="$%.2f",
-            ),
-            "is_tuition": st.column_config.CheckboxColumn("Tuition?"),
-            "sort_order": st.column_config.NumberColumn("Sort"),
-        },
-    )
-
-    # Track selection
-    if event and event.selection and event.selection.rows:
-        selected_idx = event.selection.rows[0]
-        st.session_state["selected_fee"] = display_df.iloc[selected_idx].to_dict()
+    # Data table
+    if not display_df.empty:
+        interactive_table(
+            display_df,
+            paging=len(display_df) > 20,
+            searching=False,
+            ordering=True,
+            classes="display compact",
+            lengthMenu=[20, 50, 100],
+        )
     else:
-        if "selected_fee" in st.session_state:
-            del st.session_state["selected_fee"]
+        st.info("No fees found.")
 
-    # Action buttons AFTER table (so selection is already processed)
-    has_selection = "selected_fee" in st.session_state
-    b1, b2, b3, b4 = st.columns([1, 1, 1, 2])
+    # Row selector + action buttons
+    def _fee_label(row):
+        return f"{row['program_name']} | {row['fee_name']} | {row['effective_from']}"
+
+    row_options = (
+        [_fee_label(display_df.iloc[i]) for i in range(len(display_df))]
+        if not display_df.empty else []
+    )
+    sel_col, b1, b2, b3 = st.columns([3, 1, 1, 1])
+    with sel_col:
+        selected_val = st.selectbox(
+            "Select a fee",
+            [""] + row_options,
+            key="fee_select",
+            label_visibility="collapsed",
+            placeholder="Select a fee to edit or delete...",
+        )
+    selected_row = None
+    if selected_val and not display_df.empty:
+        for i in range(len(display_df)):
+            if _fee_label(display_df.iloc[i]) == selected_val:
+                selected_row = display_df.iloc[i].to_dict()
+                break
     with b1:
         if st.button("\u2795 Add", use_container_width=True, key="fee_add"):
             add_fee_dialog()
@@ -1271,26 +1263,20 @@ def render_fees_tab():
         if st.button(
             "\u270f\ufe0f Edit",
             use_container_width=True,
-            disabled=not has_selection,
+            disabled=selected_row is None,
             key="fee_edit",
         ):
-            edit_fee_dialog(st.session_state.get("selected_fee", {}))
+            if selected_row:
+                edit_fee_dialog(selected_row)
     with b3:
         if st.button(
             "\U0001f5d1\ufe0f Delete",
             use_container_width=True,
-            disabled=not has_selection,
+            disabled=selected_row is None,
             key="fee_del",
         ):
-            delete_fee_dialog(st.session_state.get("selected_fee", {}))
-    with b4:
-        if has_selection:
-            sel = st.session_state["selected_fee"]
-            st.info(
-                f"Selected: **{sel['program_name']}** | {sel['fee_name']} "
-                f"(Dom: ${safe_float(sel.get('domestic_amount', 0)):,.2f} / "
-                f"Intl: ${safe_float(sel.get('international_amount', 0)):,.2f})"
-            )
+            if selected_row:
+                delete_fee_dialog(selected_row)
 
     if total > 0:
         st.caption(f"Showing {len(display_df)} of {total} fee rows")
@@ -1495,43 +1481,35 @@ def render_outline_map_tab():
     if not programs:
         st.warning("Add programs first before managing outline mappings.")
 
-    # Data table (read-only with selection)
-    event = st.dataframe(
-        display_with_links,
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="outline_table",
-        column_config={
-            "program_name": st.column_config.TextColumn("Program", width="large"),
-            "outline_filename": st.column_config.TextColumn(
-                "Outline Filename", width="medium",
-            ),
-            "google_drive_file_id": st.column_config.TextColumn(
-                "Drive File ID", width="medium",
-            ),
-            "preview_link": st.column_config.LinkColumn(
-                "Preview", display_text="Open", width="small",
-            ),
-        },
-        column_order=[
-            "program_name", "outline_filename",
-            "google_drive_file_id", "preview_link",
-        ],
-    )
-
-    # Track selection (use display_df without preview_link for stored data)
-    if event and event.selection and event.selection.rows:
-        selected_idx = event.selection.rows[0]
-        st.session_state["selected_outline"] = display_df.iloc[selected_idx].to_dict()
+    # Data table
+    if not display_with_links.empty:
+        interactive_table(
+            display_with_links,
+            paging=len(display_with_links) > 20,
+            searching=False,
+            ordering=True,
+            classes="display compact",
+            lengthMenu=[20, 50, 100],
+        )
     else:
-        if "selected_outline" in st.session_state:
-            del st.session_state["selected_outline"]
+        st.info("No outline mappings found.")
 
-    # Action buttons AFTER table (so selection is already processed)
-    has_selection = "selected_outline" in st.session_state
-    b1, b2, b3, b4 = st.columns([1, 1, 1, 2])
+    # Row selector + action buttons
+    row_options = display_df["program_name"].tolist() if not display_df.empty else []
+    sel_col, b1, b2, b3 = st.columns([3, 1, 1, 1])
+    with sel_col:
+        selected_val = st.selectbox(
+            "Select an outline mapping",
+            [""] + row_options,
+            key="outline_select",
+            label_visibility="collapsed",
+            placeholder="Select a mapping to edit or delete...",
+        )
+    selected_row = None
+    if selected_val and not display_df.empty:
+        match = display_df[display_df["program_name"] == selected_val]
+        if not match.empty:
+            selected_row = match.iloc[0].to_dict()
     with b1:
         if st.button("\u2795 Add", use_container_width=True, key="outline_add"):
             add_outline_dialog()
@@ -1539,25 +1517,20 @@ def render_outline_map_tab():
         if st.button(
             "\u270f\ufe0f Edit",
             use_container_width=True,
-            disabled=not has_selection,
+            disabled=selected_row is None,
             key="outline_edit",
         ):
-            edit_outline_dialog(st.session_state.get("selected_outline", {}))
+            if selected_row:
+                edit_outline_dialog(selected_row)
     with b3:
         if st.button(
             "\U0001f5d1\ufe0f Delete",
             use_container_width=True,
-            disabled=not has_selection,
+            disabled=selected_row is None,
             key="outline_del",
         ):
-            delete_outline_dialog(st.session_state.get("selected_outline", {}))
-    with b4:
-        if has_selection:
-            sel = st.session_state["selected_outline"]
-            st.info(
-                f"Selected: **{sel['program_name']}** "
-                f"({sel.get('outline_filename', 'no filename')})"
-            )
+            if selected_row:
+                delete_outline_dialog(selected_row)
 
     if total_mappings > 0:
         st.caption(f"Showing {len(display_df)} of {total_mappings} mappings")
@@ -1651,21 +1624,16 @@ def render_audit_log_tab():
     # Reverse chronological
     filtered = filtered.iloc[::-1].reset_index(drop=True)
 
-    st.dataframe(
-        filtered,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "timestamp": st.column_config.TextColumn("Timestamp", width="medium"),
-            "user": st.column_config.TextColumn("User", width="small"),
-            "action": st.column_config.TextColumn("Action", width="small"),
-            "tab_name": st.column_config.TextColumn("Tab", width="small"),
-            "row_identifier": st.column_config.TextColumn("Row ID", width="medium"),
-            "field_name": st.column_config.TextColumn("Field", width="medium"),
-            "old_value": st.column_config.TextColumn("Old Value", width="medium"),
-            "new_value": st.column_config.TextColumn("New Value", width="medium"),
-        },
-    )
+    if not filtered.empty:
+        interactive_table(
+            filtered,
+            paging=True,
+            searching=True,
+            ordering=True,
+            classes="display compact",
+        )
+    else:
+        st.info("No matching audit records.")
     st.caption(f"Showing {len(filtered)} of {total} records (newest first).")
 
 
@@ -1739,7 +1707,16 @@ def render_contract_log_tab():
     # Reverse chronological
     filtered = filtered.iloc[::-1].reset_index(drop=True)
 
-    st.dataframe(filtered, use_container_width=True, hide_index=True)
+    if not filtered.empty:
+        interactive_table(
+            filtered,
+            paging=True,
+            searching=True,
+            ordering=True,
+            classes="display compact",
+        )
+    else:
+        st.info("No matching contract records.")
     st.caption(f"Showing {len(filtered)} of {total} records (newest first).")
 
 
