@@ -555,12 +555,7 @@ def render_programs_tab():
     display_df = filter_dataframe(df, search) if not df.empty else df
 
     if not display_df.empty:
-        st.dataframe(display_df, use_container_width=True, hide_index=True) > 20,
-            searching=False,
-            ordering=True,
-            classes="display compact",
-            lengthMenu=[20, 50, 100],
-        )
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
     else:
         st.info("No programs found.")
 
@@ -904,12 +899,7 @@ def render_intakes_tab():
 
     # Data table
     if not display_df.empty:
-        st.dataframe(display_df, use_container_width=True, hide_index=True) > 20,
-            searching=False,
-            ordering=True,
-            classes="display compact",
-            lengthMenu=[20, 50, 100],
-        )
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
     else:
         st.info("No intakes found.")
 
@@ -1217,12 +1207,7 @@ def render_fees_tab():
 
     # Data table
     if not display_df.empty:
-        st.dataframe(display_df, use_container_width=True, hide_index=True) > 20,
-            searching=False,
-            ordering=True,
-            classes="display compact",
-            lengthMenu=[20, 50, 100],
-        )
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
     else:
         st.info("No fees found.")
 
@@ -1476,12 +1461,7 @@ def render_outline_map_tab():
 
     # Data table
     if not display_with_links.empty:
-        st.dataframe(display_with_links, use_container_width=True, hide_index=True) > 20,
-            searching=False,
-            ordering=True,
-            classes="display compact",
-            lengthMenu=[20, 50, 100],
-        )
+        st.dataframe(display_with_links, use_container_width=True, hide_index=True)
     else:
         st.info("No outline mappings found.")
 
