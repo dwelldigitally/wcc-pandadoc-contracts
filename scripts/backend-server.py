@@ -33,7 +33,6 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from fee_matching import match_fees, resolve_fee_amounts
 
 DATA_DIR = SCRIPT_DIR.parent / "data"
-OUTLINE_DIR = SCRIPT_DIR.parent / "pdf"
 
 
 def require_env(name):
@@ -112,8 +111,12 @@ def load_all_data():
             try:
                 outline_rows = fetch_google_sheet_tab("Outline Map")
                 for row in outline_rows:
-                    if row.get("outline_filename"):
-                        outline_map[row["program_name"].lower()] = row["outline_filename"]
+                    drive_id = row.get("google_drive_file_id", "").strip()
+                    if drive_id:
+                        outline_map[row["program_name"].lower()] = {
+                            "outline_filename": row.get("outline_filename", "").strip(),
+                            "google_drive_file_id": drive_id,
+                        }
             except Exception:
                 pass
             print(f"  Loaded from Google Sheets: {len(programs)} programs, {len(fees)} fees, {len(outline_map)} outlines")
@@ -127,8 +130,12 @@ def load_all_data():
     map_path = DATA_DIR / "program-outline-map.csv"
     if map_path.exists():
         for row in parse_csv_file(map_path):
-            if row.get("outline_filename"):
-                outline_map[row["program_name"].lower()] = row["outline_filename"]
+            drive_id = row.get("google_drive_file_id", "").strip()
+            if drive_id:
+                outline_map[row["program_name"].lower()] = {
+                    "outline_filename": row.get("outline_filename", "").strip(),
+                    "google_drive_file_id": drive_id,
+                }
     print(f"  Loaded from local CSV: {len(programs)} programs, {len(fees)} fees, {len(outline_map)} outlines")
     return programs, fees, outline_map
 
@@ -266,8 +273,9 @@ def get_program_data(program_name, residence_status, intake_date=None, contact=N
     matched_fees, effective_from = match_fees(FEES, program_name, reference_date)
     fee_items, total = resolve_fee_amounts(matched_fees, domestic)
 
-    # Outline check
-    has_outline = program_name.lower() in OUTLINE_MAP
+    # Outline check — requires a Google Drive file ID
+    outline_entry = OUTLINE_MAP.get(program_name.lower())
+    has_outline = bool(outline_entry and outline_entry.get("google_drive_file_id"))
 
     return {
         "program": {

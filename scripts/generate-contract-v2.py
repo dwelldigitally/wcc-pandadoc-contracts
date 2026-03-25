@@ -607,32 +607,69 @@ def fill_docx(template_path, output_path, contact, program, fees, amount_col, in
 # ---------------------------------------------------------------------------
 
 SIGNING_TEMPLATE_ID = "DsoTNroxu5qX332aioZVjK"
-OUTLINE_DIR = SCRIPT_DIR.parent / "pdf"
 OUTLINE_MAP_PATH = DATA_DIR / "program-outline-map.csv"
+OUTLINE_CACHE_DIR = Path("/tmp/outlines")
 
 
 def load_outline_map():
-    """Load program -> outline filename mapping."""
+    """Load program -> {filename, google_drive_file_id} mapping from CSV."""
     mapping = {}
     if not OUTLINE_MAP_PATH.exists():
         print(f"  Warning: outline map not found at {OUTLINE_MAP_PATH}, skipping.")
         return mapping
     with open(OUTLINE_MAP_PATH, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
-            if row["outline_filename"]:
-                mapping[row["program_name"].lower()] = row["outline_filename"]
+            program_key = row["program_name"].strip().lower()
+            drive_id = row.get("google_drive_file_id", "").strip()
+            filename = row.get("outline_filename", "").strip()
+            if drive_id:
+                mapping[program_key] = {
+                    "filename": filename,
+                    "google_drive_file_id": drive_id,
+                }
     return mapping
 
 
-def get_outline_path(outline_map, program_name):
-    """Look up the PDF outline file for a program."""
-    filename = outline_map.get(program_name.lower())
-    if not filename:
+def download_outline_from_drive(file_id, api_key):
+    """Download a program outline PDF from Google Drive.
+
+    Uses https://www.googleapis.com/drive/v3/files/{fileId}?alt=media&key={api_key}.
+    Caches downloaded files in /tmp/outlines/{file_id}.pdf to avoid re-downloading.
+    Returns the local file path on success, or None on failure.
+    """
+    OUTLINE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cached_path = OUTLINE_CACHE_DIR / f"{file_id}.pdf"
+
+    if cached_path.exists():
+        return cached_path
+
+    url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={api_key}"
+    req = urllib.request.Request(url)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+        with open(cached_path, "wb") as f:
+            f.write(data)
+        return cached_path
+    except Exception as e:
+        print(f"  Warning: Failed to download outline from Drive (file_id={file_id}): {e}")
         return None
-    pdf_path = OUTLINE_DIR / f"{filename}.pdf"
-    if pdf_path.exists():
-        return pdf_path
-    return None
+
+
+def get_outline_path(outline_map, program_name, api_key):
+    """Look up and download the PDF outline for a program from Google Drive.
+
+    Returns the local cached file path, or None if unavailable.
+    """
+    entry = outline_map.get(program_name.lower())
+    if not entry:
+        return None
+
+    file_id = entry.get("google_drive_file_id")
+    if not file_id:
+        return None
+
+    return download_outline_from_drive(file_id, api_key)
 
 
 def create_from_signing_template(doc_name, advisor, student_email, student_first, student_last):
@@ -899,7 +936,7 @@ def main():
 
     # Step 7: Add program outline PDF as section (between contract and signing page)
     outline_map = load_outline_map()
-    outline_path = get_outline_path(outline_map, program_name)
+    outline_path = get_outline_path(outline_map, program_name, GOOGLE_API_KEY)
     if outline_path:
         print(f"\n7. Adding program outline as section...")
         add_section_from_file(doc_id, outline_path, section_name=f"Program Outline - {program_name}")
