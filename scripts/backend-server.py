@@ -19,6 +19,8 @@ import csv
 import os
 import sys
 import re
+import threading
+import tempfile
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from pathlib import Path
@@ -176,6 +178,39 @@ except Exception as e:
 
 
 # ---------------------------------------------------------------------------
+# Per-deal generation lock to prevent concurrent generation
+# ---------------------------------------------------------------------------
+
+_generation_locks = {}
+_locks_mutex = threading.Lock()
+
+
+def acquire_deal_lock(deal_id):
+    """Try to acquire a lock for a deal. Returns True if acquired, False if already locked."""
+    with _locks_mutex:
+        if deal_id in _generation_locks:
+            return False
+        _generation_locks[deal_id] = datetime.now(PST)
+        return True
+
+
+def release_deal_lock(deal_id):
+    """Release a deal lock."""
+    with _locks_mutex:
+        _generation_locks.pop(deal_id, None)
+
+
+def cleanup_stale_locks():
+    """Remove locks older than 5 minutes (in case of crash)."""
+    with _locks_mutex:
+        now = datetime.now(PST)
+        stale = [k for k, v in _generation_locks.items()
+                 if (now - v).total_seconds() > 300]
+        for k in stale:
+            del _generation_locks[k]
+
+
+# ---------------------------------------------------------------------------
 # Core logic
 # ---------------------------------------------------------------------------
 
@@ -196,6 +231,16 @@ def fetch_intakes_live(program_name):
         except Exception as e:
             print(f"Intakes fetch error: {e}")
     return intakes
+
+
+def fetch_intakes_live_all():
+    """Fetch ALL intakes from Google Sheets (not filtered by program)."""
+    if GOOGLE_SHEETS_ID and GOOGLE_API_KEY:
+        try:
+            return fetch_google_sheet_tab("Intakes")
+        except Exception as e:
+            print(f"Intakes fetch error: {e}")
+    return []
 
 
 def fetch_contact(deal_id):
@@ -452,118 +497,154 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "Invalid intakeDate format (expected YYYY-MM-DD)"}, 400)
                 return
 
-            # Build CLI args
-            import subprocess
-            cmd = [sys.executable, str(SCRIPT_DIR / "generate-contract-v2.py"), str(deal_id)]
-            if intake_date:
-                cmd.append(intake_date)
+            # Clean up any stale locks
+            cleanup_stale_locks()
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=180,
-            )
-
-            if result.returncode != 0:
-                error_detail = result.stderr.strip() or result.stdout.strip()
-                print(f"Contract generation failed for deal {deal_id}: {error_detail}")
-
-                # Try to clean up orphaned PandaDoc document
-                orphan_doc_id = ""
-                for line in (result.stdout or "").split("\n"):
-                    if "Document ID:" in line:
-                        orphan_doc_id = line.split("Document ID:")[-1].strip()
-                        break
-                if orphan_doc_id:
-                    try:
-                        import urllib.request
-                        pandadoc_key = os.environ.get("PANDADOC_API_KEY", "")
-                        if pandadoc_key:
-                            del_req = urllib.request.Request(
-                                f"https://api.pandadoc.com/public/v1/documents/{orphan_doc_id}",
-                                method="DELETE",
-                            )
-                            del_req.add_header("Authorization", f"API-Key {pandadoc_key}")
-                            urllib.request.urlopen(del_req, timeout=10)
-                            print(f"Cleaned up orphaned document: {orphan_doc_id}")
-                    except Exception as cleanup_err:
-                        print(f"Could not clean up orphaned document {orphan_doc_id}: {cleanup_err}")
-
-                self.send_json({"error": "Contract generation failed. Check server logs."}, 500)
+            # Acquire per-deal lock
+            if not acquire_deal_lock(str(deal_id)):
+                self.send_json({"error": "Contract generation already in progress for this deal. Please wait."}, 429)
                 return
 
-            # Parse output
-            output = result.stdout
-            doc_id = ""
-            doc_url = ""
-            student = ""
-            program = ""
-            fee_tier = ""
-            total = ""
-            fee_count = ""
-
-            for line in output.split("\n"):
-                if "Document ID:" in line:
-                    doc_id = line.split("Document ID:")[-1].strip()
-                if "View:" in line:
-                    doc_url = line.split("View:")[-1].strip()
-                if "Student:" in line and not student:
-                    student = line.split("Student:")[-1].strip()
-                if "Program:" in line and not program:
-                    program = line.split("Program:")[-1].strip()
-                if "Fee tier:" in line or "-> Domestic" in line or "-> International" in line:
-                    fee_tier = "Domestic" if "Domestic" in line else "International"
-                if "TOTAL:" in line:
-                    total = line.split("TOTAL:")[-1].strip()
-                if "fee items" in line:
-                    parts = line.strip().split()
-                    if parts[0].isdigit():
-                        fee_count = parts[0]
-
-            # Write to Contract Log in Google Sheets
+            data_file_path = None
             try:
-                contract_log_row = [
-                    f"CTR-{deal_id}-{datetime.now(PST).strftime('%H%M%S')}",
-                    datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
-                    str(deal_id),
-                    student,
-                    program,
-                    intake_date or "",
-                    fee_tier,
-                    total,
-                    "standard",
-                    doc_id,
-                    doc_url,
-                    "draft",
-                ]
-                spreadsheet = get_gspread_client_server()
+                # Write cached data to temp file so the script doesn't need to call Google Sheets
+                data_for_script = {
+                    "programs": _DATA["programs"],
+                    "fees": _DATA["fees"],
+                    "outline_map": {k: v for k, v in _DATA["outline_map"].items()},
+                }
+                # Also fetch intakes live (they change frequently)
+                intakes = fetch_intakes_live_all()
+                data_for_script["intakes"] = intakes
+
+                data_file = tempfile.NamedTemporaryFile(
+                    mode='w', suffix='.json', delete=False, dir=tempfile.gettempdir()
+                )
+                json.dump(data_for_script, data_file)
+                data_file.close()
+                data_file_path = data_file.name
+
+                # Build CLI args
+                import subprocess
+                cmd = [sys.executable, str(SCRIPT_DIR / "generate-contract-v2.py"), str(deal_id)]
+                if intake_date:
+                    cmd.append(intake_date)
+                cmd.extend(["--data-file", data_file_path])
+
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+
+                if result.returncode != 0:
+                    error_detail = result.stderr.strip() or result.stdout.strip()
+                    print(f"Contract generation failed for deal {deal_id}: {error_detail}")
+
+                    # Try to clean up orphaned PandaDoc document
+                    orphan_doc_id = ""
+                    for line in (result.stdout or "").split("\n"):
+                        if "Document ID:" in line:
+                            orphan_doc_id = line.split("Document ID:")[-1].strip()
+                            break
+                    if orphan_doc_id:
+                        try:
+                            import urllib.request
+                            pandadoc_key = os.environ.get("PANDADOC_API_KEY", "")
+                            if pandadoc_key:
+                                del_req = urllib.request.Request(
+                                    f"https://api.pandadoc.com/public/v1/documents/{orphan_doc_id}",
+                                    method="DELETE",
+                                )
+                                del_req.add_header("Authorization", f"API-Key {pandadoc_key}")
+                                urllib.request.urlopen(del_req, timeout=10)
+                                print(f"Cleaned up orphaned document: {orphan_doc_id}")
+                        except Exception as cleanup_err:
+                            print(f"Could not clean up orphaned document {orphan_doc_id}: {cleanup_err}")
+
+                    self.send_json({"error": "Contract generation failed. Check server logs."}, 500)
+                    return
+
+                # Parse output
+                output = result.stdout
+                doc_id = ""
+                doc_url = ""
+                student = ""
+                program = ""
+                fee_tier = ""
+                total = ""
+                fee_count = ""
+
+                for line in output.split("\n"):
+                    if "Document ID:" in line:
+                        doc_id = line.split("Document ID:")[-1].strip()
+                    if "View:" in line:
+                        doc_url = line.split("View:")[-1].strip()
+                    if "Student:" in line and not student:
+                        student = line.split("Student:")[-1].strip()
+                    if "Program:" in line and not program:
+                        program = line.split("Program:")[-1].strip()
+                    if "Fee tier:" in line or "-> Domestic" in line or "-> International" in line:
+                        fee_tier = "Domestic" if "Domestic" in line else "International"
+                    if "TOTAL:" in line:
+                        total = line.split("TOTAL:")[-1].strip()
+                    if "fee items" in line:
+                        parts = line.strip().split()
+                        if parts[0].isdigit():
+                            fee_count = parts[0]
+
+                # Write to Contract Log in Google Sheets
                 try:
-                    log_ws = spreadsheet.worksheet("Contract Log")
+                    contract_log_row = [
+                        f"CTR-{deal_id}-{datetime.now(PST).strftime('%H%M%S')}",
+                        datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                        str(deal_id),
+                        student,
+                        program,
+                        intake_date or "",
+                        fee_tier,
+                        total,
+                        "standard",
+                        doc_id,
+                        doc_url,
+                        "draft",
+                    ]
+                    spreadsheet = get_gspread_client_server()
+                    try:
+                        log_ws = spreadsheet.worksheet("Contract Log")
+                    except Exception:
+                        log_ws = spreadsheet.add_worksheet(title="Contract Log", rows=1000, cols=12)
+                        log_ws.append_row([
+                            "contract_id", "generated_at", "deal_id", "student_name",
+                            "program_name", "intake_date", "fee_tier", "total_amount",
+                            "contract_type", "pandadoc_document_id", "pandadoc_url", "status",
+                        ], value_input_option="RAW")
+                    log_ws.append_row(contract_log_row, value_input_option="USER_ENTERED")
+                    print(f"Contract logged: CTR-{deal_id}")
+                except Exception as e:
+                    print(f"Warning: Could not write contract log: {e}")
+
+                has_outline = "Outline added" in output
+
+                self.send_json({
+                    "documentId": doc_id,
+                    "documentUrl": doc_url,
+                    "student": student,
+                    "program": program,
+                    "feeTier": fee_tier,
+                    "total": total,
+                    "feeCount": fee_count,
+                    "hasOutline": has_outline,
+                })
+            finally:
+                release_deal_lock(str(deal_id))
+                # Clean up temp data file
+                try:
+                    if data_file_path and os.path.exists(data_file_path):
+                        os.unlink(data_file_path)
                 except Exception:
-                    log_ws = spreadsheet.add_worksheet(title="Contract Log", rows=1000, cols=12)
-                    log_ws.append_row([
-                        "contract_id", "generated_at", "deal_id", "student_name",
-                        "program_name", "intake_date", "fee_tier", "total_amount",
-                        "contract_type", "pandadoc_document_id", "pandadoc_url", "status",
-                    ], value_input_option="RAW")
-                log_ws.append_row(contract_log_row, value_input_option="USER_ENTERED")
-                print(f"Contract logged: CTR-{deal_id}")
-            except Exception as e:
-                print(f"Warning: Could not write contract log: {e}")
-
-            has_outline = "Outline added" in output
-
-            self.send_json({
-                "documentId": doc_id,
-                "documentUrl": doc_url,
-                "student": student,
-                "program": program,
-                "feeTier": fee_tier,
-                "total": total,
-                "feeCount": fee_count,
-                "hasOutline": has_outline,
-            })
+                    pass
             return
 
         self.send_json({"error": "Not found"}, 404)

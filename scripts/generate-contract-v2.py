@@ -886,7 +886,14 @@ def main():
         sys.exit(1)
 
     deal_id = sys.argv[1]
-    selected_intake_date = sys.argv[2] if len(sys.argv) > 2 else ""
+    selected_intake_date = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("--") else ""
+
+    # Check for --data-file argument
+    data_file_path = None
+    for i, arg in enumerate(sys.argv):
+        if arg == "--data-file" and i + 1 < len(sys.argv):
+            data_file_path = sys.argv[i + 1]
+            break
 
     print("=" * 50)
     print("WCC Contract Generator v2")
@@ -900,8 +907,15 @@ def main():
 
     # Step 1: Load program/fee data
     print("\n1. Loading program data...")
-    data = load_data()
-    print(f"   {len(data['programs'])} programs, {len(data['fees'])} fee items")
+    if data_file_path and os.path.exists(data_file_path):
+        # Use pre-cached data from backend (avoids Google Sheets API calls)
+        with open(data_file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        print(f"   {len(data.get('programs', []))} programs, {len(data.get('fees', []))} fee items (from cache)")
+    else:
+        # Fallback: load from Google Sheets or CSV directly
+        data = load_data()
+        print(f"   {len(data.get('programs', []))} programs, {len(data.get('fees', []))} fee items")
 
     # Step 2: Get HubSpot deal + contact
     print(f"\n2. Fetching HubSpot deal {deal_id}...")
@@ -1007,7 +1021,11 @@ def main():
     advisor = hs["advisor"]
     print(f"   Advisor: {advisor.get('firstName', '')} {advisor.get('lastName', '')}")
 
-    outline_map = load_outline_map()
+    # Use cached outline map from backend if available, otherwise load from CSV
+    if data_file_path and "outline_map" in data:
+        outline_map = data["outline_map"]
+    else:
+        outline_map = load_outline_map()
     outline_path = get_outline_path(outline_map, program_name)
 
     doc_name = f"{contact.get('firstname', '')} {contact.get('lastname', '')} - {program_name} Enrollment Contract"
