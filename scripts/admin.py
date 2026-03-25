@@ -1,8 +1,9 @@
 """
 WCC Contract Generator — Streamlit Admin Panel
 
-Inline-editable data grid dashboard for Programs, Intakes, Fees, Outline Map.
-Provides spreadsheet-style CRUD with field-level audit logging to Google Sheets.
+Dialog-based CRUD dashboard for Programs, Intakes, Fees, Outline Map.
+Uses @st.dialog modals for Add, Edit, and Delete operations with
+read-only data tables and row selection.
 
 Environment variables:
     ADMIN_PASSWORD              — Password for admin login
@@ -70,12 +71,12 @@ NAV_ITEMS = [
 ]
 
 NAV_ICONS = {
-    "Programs": "🎓",
-    "Intakes": "📅",
-    "Fees": "💲",
-    "Outline Map": "📋",
-    "Audit Log": "📝",
-    "Contract Log": "📄",
+    "Programs": "\U0001f393",
+    "Intakes": "\U0001f4c5",
+    "Fees": "\U0001f4b2",
+    "Outline Map": "\U0001f4cb",
+    "Audit Log": "\U0001f4dd",
+    "Contract Log": "\U0001f4c4",
 }
 
 # ---------------------------------------------------------------------------
@@ -361,210 +362,6 @@ def check_auth():
 
 
 # ---------------------------------------------------------------------------
-# Change detection and save logic
-# ---------------------------------------------------------------------------
-
-
-def detect_changes(original_df, edited_df, key_columns, data_columns):
-    """Compare original and edited DataFrames.
-
-    Returns a dict with keys: edited, added, deleted.
-    - edited: list of dicts describing cell-level changes
-    - added: list of dicts for new rows
-    - deleted: list of dicts for rows marked for deletion
-    """
-    changes = {"edited": [], "added": [], "deleted": []}
-
-    # Work on copies to avoid mutation
-    work_edited = edited_df.copy()
-
-    # Detect deletes (rows with delete checkbox checked)
-    if "delete" in work_edited.columns:
-        to_delete = work_edited[work_edited["delete"] == True]  # noqa: E712
-        changes["deleted"] = to_delete.to_dict("records")
-        work_edited = work_edited[work_edited["delete"] != True]  # noqa: E712
-
-    # Detect new rows (rows beyond the original length, after removing deletes)
-    original_count = len(original_df)
-    # Account for deleted rows that were in original range
-    deleted_in_original = 0
-    for rec in changes["deleted"]:
-        # Check if this deleted row was from the original set
-        for idx in range(original_count):
-            orig_row = original_df.iloc[idx]
-            match = all(
-                str(orig_row.get(kc, "")) == str(rec.get(kc, ""))
-                for kc in key_columns
-                if kc in orig_row.index and kc in rec
-            )
-            if match:
-                deleted_in_original += 1
-                break
-
-    # New rows are those in edited_df (with delete=False) that don't match originals
-    if len(work_edited) > (original_count - deleted_in_original):
-        new_count = len(work_edited) - (original_count - deleted_in_original)
-        new_rows = work_edited.tail(new_count)
-        changes["added"] = new_rows.to_dict("records")
-
-    # Detect edits (compare cell-by-cell for existing rows that aren't deleted)
-    compare_cols = [c for c in data_columns if c != "delete"]
-    surviving_original_count = original_count - deleted_in_original
-    compare_count = min(surviving_original_count, len(work_edited) - len(changes["added"]))
-
-    # Build a mapping from remaining edited rows back to original rows
-    edited_existing = work_edited.head(compare_count)
-    orig_idx = 0
-    for edit_idx in range(compare_count):
-        # Skip original rows that were deleted
-        while orig_idx < original_count:
-            orig_row = original_df.iloc[orig_idx]
-            was_deleted = False
-            for rec in changes["deleted"]:
-                match = all(
-                    str(orig_row.get(kc, "")) == str(rec.get(kc, ""))
-                    for kc in key_columns
-                    if kc in orig_row.index and kc in rec
-                )
-                if match:
-                    was_deleted = True
-                    break
-            if not was_deleted:
-                break
-            orig_idx += 1
-
-        if orig_idx >= original_count:
-            break
-
-        edited_row = edited_existing.iloc[edit_idx]
-        orig_row = original_df.iloc[orig_idx]
-
-        for col in compare_cols:
-            old_val = str(orig_row.get(col, ""))
-            new_val = str(edited_row.get(col, ""))
-            if old_val != new_val:
-                identifier = str(edited_row.get(key_columns[0], f"row-{edit_idx}"))
-                changes["edited"].append({
-                    "row_sheet_index": orig_idx,
-                    "col": col,
-                    "old": old_val,
-                    "new": new_val,
-                    "identifier": identifier,
-                })
-        orig_idx += 1
-
-    return changes
-
-
-def build_change_summary(changes):
-    """Return a human-readable summary string for changes."""
-    parts = []
-    n_edited = len(changes["edited"])
-    n_added = len(changes["added"])
-    n_deleted = len(changes["deleted"])
-
-    if n_edited > 0:
-        parts.append(f"{n_edited} cell{'s' if n_edited != 1 else ''} edited")
-    if n_added > 0:
-        parts.append(f"{n_added} row{'s' if n_added != 1 else ''} added")
-    if n_deleted > 0:
-        parts.append(f"{n_deleted} row{'s' if n_deleted != 1 else ''} to delete")
-
-    if not parts:
-        return ""
-    return ", ".join(parts)
-
-
-def apply_changes(sheet_name, changes, key_columns, data_columns, original_df):
-    """Apply detected changes to Google Sheets and log each action.
-
-    Returns (success_count, error_messages).
-    """
-    success = 0
-    errors = []
-    columns_no_delete = [c for c in data_columns if c != "delete"]
-
-    # Process deletes first (in reverse order to keep row indices stable)
-    delete_indices = []
-    for rec in changes["deleted"]:
-        match = {k: str(rec.get(k, "")) for k in key_columns if k in rec}
-        if len(match) == 1:
-            col_name = list(match.keys())[0]
-            idx = find_row_index(sheet_name, col_name, match[col_name])
-        else:
-            idx = find_row_index_multi(sheet_name, match)
-        if idx is not None:
-            delete_indices.append((idx, rec))
-        else:
-            identifier = str(rec.get(key_columns[0], "unknown"))
-            errors.append(f"Could not find row to delete: {identifier}")
-
-    # Sort in reverse so higher row indices are deleted first
-    delete_indices.sort(key=lambda x: x[0], reverse=True)
-    for idx, rec in delete_indices:
-        clean = {k: v for k, v in rec.items() if k != "delete"}
-        identifier = str(rec.get(key_columns[0], "unknown"))
-        try:
-            delete_row(sheet_name, idx)
-            log_delete(sheet_name, identifier, clean)
-            success += 1
-        except Exception as exc:
-            errors.append(f"Delete failed for {identifier}: {exc}")
-
-    # Process edits (grouped by row)
-    edited_rows = {}
-    for change in changes["edited"]:
-        row_idx = change["row_sheet_index"]
-        if row_idx not in edited_rows:
-            edited_rows[row_idx] = []
-        edited_rows[row_idx].append(change)
-
-    for row_idx, cell_changes in edited_rows.items():
-        orig_row = original_df.iloc[row_idx]
-        # Build the updated row values
-        new_row_dict = {c: str(orig_row.get(c, "")) for c in columns_no_delete}
-        for cc in cell_changes:
-            new_row_dict[cc["col"]] = cc["new"]
-
-        match = {k: str(orig_row.get(k, "")) for k in key_columns}
-        if len(match) == 1:
-            col_name = list(match.keys())[0]
-            sheet_idx = find_row_index(sheet_name, col_name, match[col_name])
-        else:
-            sheet_idx = find_row_index_multi(sheet_name, match)
-
-        if sheet_idx is not None:
-            row_values = [new_row_dict.get(c, "") for c in columns_no_delete]
-            try:
-                update_row(sheet_name, sheet_idx, row_values)
-                identifier = cell_changes[0]["identifier"]
-                for cc in cell_changes:
-                    log_audit(
-                        "UPDATE", sheet_name, identifier,
-                        cc["col"], cc["old"], cc["new"],
-                    )
-                success += 1
-            except Exception as exc:
-                errors.append(f"Update failed for row {row_idx}: {exc}")
-        else:
-            errors.append(f"Could not find row to update at original index {row_idx}")
-
-    # Process adds
-    for rec in changes["added"]:
-        row_values = [str(rec.get(c, "")) for c in columns_no_delete]
-        identifier = str(rec.get(key_columns[0], "new"))
-        try:
-            append_row(sheet_name, row_values)
-            field_dict = {c: str(rec.get(c, "")) for c in columns_no_delete}
-            log_create(sheet_name, identifier, field_dict)
-            success += 1
-        except Exception as exc:
-            errors.append(f"Add failed for {identifier}: {exc}")
-
-    return success, errors
-
-
-# ---------------------------------------------------------------------------
 # Shared UI components
 # ---------------------------------------------------------------------------
 
@@ -585,57 +382,6 @@ def render_search_bar(key, placeholder="Search..."):
     )
 
 
-def render_save_button(changes, key):
-    """Render the save changes button with a change summary.
-
-    Returns True if the user confirmed save.
-    """
-    summary = build_change_summary(changes)
-    has_changes = bool(summary)
-
-    if not has_changes:
-        st.button(
-            "No changes to save",
-            key=key,
-            disabled=True,
-            use_container_width=True,
-        )
-        return False
-
-    # Show confirmation flow
-    confirm_key = f"{key}_confirmed"
-    if confirm_key not in st.session_state:
-        st.session_state[confirm_key] = False
-
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        if st.button(
-            f"Save Changes ({summary})",
-            key=key,
-            type="primary",
-            use_container_width=True,
-        ):
-            st.session_state[confirm_key] = True
-            st.rerun()
-    with col2:
-        if st.session_state.get(confirm_key):
-            if st.button("Cancel", key=f"{key}_cancel", use_container_width=True):
-                st.session_state[confirm_key] = False
-                st.rerun()
-
-    if st.session_state.get(confirm_key):
-        st.warning(f"Confirm: {summary}. This cannot be undone.")
-        if st.button(
-            "Confirm and Apply",
-            key=f"{key}_apply",
-            type="primary",
-        ):
-            st.session_state[confirm_key] = False
-            return True
-
-    return False
-
-
 def ensure_columns(df, columns, defaults=None):
     """Ensure a DataFrame has the expected columns. Add missing ones with defaults."""
     defaults = defaults or {}
@@ -646,9 +392,125 @@ def ensure_columns(df, columns, defaults=None):
     return result[columns]
 
 
+def _parse_date_safe(val):
+    """Parse a date string to a date object, returning None on failure."""
+    if isinstance(val, date):
+        return val
+    if not val or not str(val).strip():
+        return None
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%B %d, %Y", "%b %d, %Y"):
+        try:
+            return datetime.strptime(str(val).strip(), fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Tab: Programs
 # ---------------------------------------------------------------------------
+
+
+@st.dialog("Add Program")
+def add_program_dialog():
+    """Dialog to add a new program."""
+    name = st.text_input("Program Name *")
+    code = st.text_input("Program Code *")
+    credential = st.selectbox("Credential *", CREDENTIAL_OPTIONS)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Save", type="primary", use_container_width=True):
+            if not name.strip():
+                st.error("Program Name is required.")
+                return
+            if not code.strip():
+                st.error("Program Code is required.")
+                return
+            with st.spinner("Saving..."):
+                append_row(SHEET_PROGRAMS, [name.strip(), code.strip(), credential])
+                log_create(SHEET_PROGRAMS, name.strip(), {
+                    "program_name": name.strip(),
+                    "program_code": code.strip(),
+                    "credential": credential,
+                })
+                st.cache_resource.clear()
+            st.rerun()
+    with col2:
+        if st.button("Cancel", use_container_width=True):
+            st.rerun()
+
+
+@st.dialog("Edit Program")
+def edit_program_dialog(row_data):
+    """Dialog to edit an existing program."""
+    st.caption(f"Editing: {row_data['program_name']}")
+
+    new_name = st.text_input("Program Name *", value=row_data.get("program_name", ""))
+    new_code = st.text_input("Program Code *", value=row_data.get("program_code", ""))
+    cred_index = (
+        CREDENTIAL_OPTIONS.index(row_data["credential"])
+        if row_data.get("credential") in CREDENTIAL_OPTIONS
+        else 0
+    )
+    new_cred = st.selectbox("Credential *", CREDENTIAL_OPTIONS, index=cred_index)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Save Changes", type="primary", use_container_width=True):
+            if not new_name.strip():
+                st.error("Program Name is required.")
+                return
+            if not new_code.strip():
+                st.error("Program Code is required.")
+                return
+            new_row = {
+                "program_name": new_name.strip(),
+                "program_code": new_code.strip(),
+                "credential": new_cred,
+            }
+            idx = find_row_index(SHEET_PROGRAMS, "program_name", row_data["program_name"])
+            if idx:
+                with st.spinner("Saving..."):
+                    update_row(SHEET_PROGRAMS, idx, list(new_row.values()))
+                    log_update(SHEET_PROGRAMS, row_data["program_name"], row_data, new_row)
+                    st.cache_resource.clear()
+                if "selected_program" in st.session_state:
+                    del st.session_state["selected_program"]
+                st.rerun()
+            else:
+                st.error("Could not find the row to update.")
+    with col2:
+        if st.button("Cancel", use_container_width=True):
+            st.rerun()
+
+
+@st.dialog("Delete Program")
+def delete_program_dialog(row_data):
+    """Dialog to confirm deletion of a program."""
+    st.warning(f"Are you sure you want to delete **{row_data['program_name']}**?")
+    st.markdown("This action cannot be undone.")
+
+    for k, v in row_data.items():
+        st.text(f"{k}: {v}")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("\U0001f5d1\ufe0f Delete", type="primary", use_container_width=True):
+            idx = find_row_index(SHEET_PROGRAMS, "program_name", row_data["program_name"])
+            if idx:
+                with st.spinner("Deleting..."):
+                    delete_row(SHEET_PROGRAMS, idx)
+                    log_delete(SHEET_PROGRAMS, row_data["program_name"], row_data)
+                    st.cache_resource.clear()
+                if "selected_program" in st.session_state:
+                    del st.session_state["selected_program"]
+                st.rerun()
+            else:
+                st.error("Could not find the row to delete.")
+    with col2:
+        if st.button("Cancel", use_container_width=True):
+            st.rerun()
 
 
 def render_programs_tab():
@@ -676,83 +538,304 @@ def render_programs_tab():
 
     st.markdown("---")
 
-    # Search + filter row
-    search_col, _ = st.columns([2, 3])
+    # Search + Action buttons
+    search_col, btn_col = st.columns([3, 2])
     with search_col:
         search = render_search_bar("prog_search", "Search programs by name, code...")
+    with btn_col:
+        has_selection = "selected_program" in st.session_state
+        b1, b2, b3 = st.columns(3)
+        with b1:
+            if st.button("\u2795 Add", use_container_width=True, key="prog_add"):
+                add_program_dialog()
+        with b2:
+            if st.button(
+                "\u270f\ufe0f Edit",
+                use_container_width=True,
+                disabled=not has_selection,
+                key="prog_edit",
+            ):
+                edit_program_dialog(st.session_state["selected_program"])
+        with b3:
+            if st.button(
+                "\U0001f5d1\ufe0f Delete",
+                use_container_width=True,
+                disabled=not has_selection,
+                key="prog_del",
+            ):
+                delete_program_dialog(st.session_state["selected_program"])
 
-    # Prepare editable dataframe
+    # Data table (read-only with selection)
     display_df = filter_dataframe(df, search) if not df.empty else df
-    display_df = display_df.copy()
-    display_df["delete"] = False
 
-    # Store original for comparison (the filtered view only)
-    original_df = df.copy()
-
-    edited_df = st.data_editor(
+    event = st.dataframe(
         display_df,
-        column_config={
-            "program_name": st.column_config.TextColumn(
-                "Program Name",
-                required=True,
-                width="large",
-            ),
-            "program_code": st.column_config.TextColumn(
-                "Program Code",
-                required=True,
-            ),
-            "credential": st.column_config.SelectboxColumn(
-                "Credential",
-                options=CREDENTIAL_OPTIONS,
-                required=True,
-            ),
-            "delete": st.column_config.CheckboxColumn(
-                "Delete",
-                default=False,
-                width="small",
-            ),
-        },
-        num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
-        key="programs_editor",
+        on_select="rerun",
+        selection_mode="single-row",
+        key="prog_table",
+        column_config={
+            "program_name": st.column_config.TextColumn("Program Name", width="large"),
+            "program_code": st.column_config.TextColumn("Program Code"),
+            "credential": st.column_config.TextColumn("Credential"),
+        },
     )
 
-    if not df.empty or len(edited_df) > len(display_df):
+    # Track selection
+    if event and event.selection and event.selection.rows:
+        selected_idx = event.selection.rows[0]
+        st.session_state["selected_program"] = display_df.iloc[selected_idx].to_dict()
+    else:
+        if "selected_program" in st.session_state:
+            del st.session_state["selected_program"]
+
+    # Show selected row info
+    if "selected_program" in st.session_state:
+        sel = st.session_state["selected_program"]
+        st.info(f"Selected: **{sel['program_name']}** ({sel['program_code']})")
+
+    if not df.empty:
         st.caption(f"{len(display_df)} program{'s' if len(display_df) != 1 else ''} shown")
-
-    # Detect changes
-    changes = detect_changes(
-        original_df=display_df.drop(columns=["delete"], errors="ignore"),
-        edited_df=edited_df,
-        key_columns=["program_name"],
-        data_columns=["program_name", "program_code", "credential", "delete"],
-    )
-
-    st.markdown("")
-    confirmed = render_save_button(changes, "prog_save")
-
-    if confirmed:
-        with st.spinner("Saving changes to Google Sheets..."):
-            ok, errs = apply_changes(
-                SHEET_PROGRAMS,
-                changes,
-                key_columns=["program_name"],
-                data_columns=["program_name", "program_code", "credential", "delete"],
-                original_df=display_df.drop(columns=["delete"], errors="ignore"),
-            )
-        if errs:
-            for e in errs:
-                st.error(e)
-        if ok > 0:
-            st.success(f"Saved {ok} change{'s' if ok != 1 else ''} successfully.")
-            st.cache_resource.clear()
-            st.rerun()
 
 
 # ---------------------------------------------------------------------------
 # Tab: Intakes
 # ---------------------------------------------------------------------------
+
+
+@st.dialog("Add Intake")
+def add_intake_dialog():
+    """Dialog to add a new intake."""
+    programs = get_program_names()
+    if not programs:
+        st.warning("Add programs first before adding intakes.")
+        if st.button("Close", use_container_width=True):
+            st.rerun()
+        return
+
+    program_name = st.selectbox("Program *", programs)
+
+    d1, d2 = st.columns(2)
+    with d1:
+        intake_date = st.date_input("Intake Date *", value=None, key="add_int_idate")
+    with d2:
+        end_date = st.date_input("End Date *", value=None, key="add_int_edate")
+
+    campus = st.selectbox("Campus *", CAMPUS_OPTIONS)
+
+    h1, h2 = st.columns(2)
+    with h1:
+        hours = st.text_input("Hours")
+    with h2:
+        weeks = st.text_input("Weeks")
+
+    spots_available = st.number_input("Spots Available", min_value=0, step=1, value=0)
+    status = st.selectbox("Status *", STATUS_OPTIONS)
+
+    dm1, dm2 = st.columns(2)
+    with dm1:
+        domestic_delivery = st.selectbox("Domestic Delivery Method", [""] + DELIVERY_OPTIONS)
+    with dm2:
+        intl_delivery = st.selectbox("International Delivery Method", [""] + DELIVERY_OPTIONS)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Save", type="primary", use_container_width=True):
+            if not intake_date:
+                st.error("Intake Date is required.")
+                return
+            if not end_date:
+                st.error("End Date is required.")
+                return
+            row_values = [
+                program_name,
+                str(intake_date),
+                str(end_date),
+                campus,
+                hours.strip(),
+                weeks.strip(),
+                str(spots_available),
+                status,
+                domestic_delivery,
+                intl_delivery,
+            ]
+            field_dict = {
+                "program_name": program_name,
+                "intake_date": str(intake_date),
+                "end_date": str(end_date),
+                "campus": campus,
+                "hours": hours.strip(),
+                "weeks": weeks.strip(),
+                "spots_available": str(spots_available),
+                "status": status,
+                "domestic_delivery_method": domestic_delivery,
+                "international_delivery_method": intl_delivery,
+            }
+            identifier = f"{program_name} | {intake_date} | {campus}"
+            with st.spinner("Saving..."):
+                append_row(SHEET_INTAKES, row_values)
+                log_create(SHEET_INTAKES, identifier, field_dict)
+                st.cache_resource.clear()
+            st.rerun()
+    with col2:
+        if st.button("Cancel", use_container_width=True):
+            st.rerun()
+
+
+@st.dialog("Edit Intake")
+def edit_intake_dialog(row_data):
+    """Dialog to edit an existing intake."""
+    programs = get_program_names()
+    identifier = f"{row_data.get('program_name', '')} | {row_data.get('intake_date', '')} | {row_data.get('campus', '')}"
+    st.caption(f"Editing: {identifier}")
+
+    prog_index = (
+        programs.index(row_data["program_name"])
+        if row_data.get("program_name") in programs
+        else 0
+    )
+    program_name = st.selectbox("Program *", programs, index=prog_index)
+
+    d1, d2 = st.columns(2)
+    with d1:
+        parsed_intake = _parse_date_safe(row_data.get("intake_date", ""))
+        intake_date = st.date_input(
+            "Intake Date *",
+            value=parsed_intake,
+            key="edit_int_idate",
+        )
+    with d2:
+        parsed_end = _parse_date_safe(row_data.get("end_date", ""))
+        end_date = st.date_input(
+            "End Date *",
+            value=parsed_end,
+            key="edit_int_edate",
+        )
+
+    campus_index = (
+        CAMPUS_OPTIONS.index(row_data["campus"])
+        if row_data.get("campus") in CAMPUS_OPTIONS
+        else 0
+    )
+    campus = st.selectbox("Campus *", CAMPUS_OPTIONS, index=campus_index)
+
+    h1, h2 = st.columns(2)
+    with h1:
+        hours = st.text_input("Hours", value=str(row_data.get("hours", "")))
+    with h2:
+        weeks = st.text_input("Weeks", value=str(row_data.get("weeks", "")))
+
+    spots_available = st.number_input(
+        "Spots Available",
+        min_value=0,
+        step=1,
+        value=safe_int(row_data.get("spots_available", 0), 0),
+    )
+
+    status_index = (
+        STATUS_OPTIONS.index(row_data["status"])
+        if row_data.get("status") in STATUS_OPTIONS
+        else 0
+    )
+    status = st.selectbox("Status *", STATUS_OPTIONS, index=status_index)
+
+    dm1, dm2 = st.columns(2)
+    dom_options = [""] + DELIVERY_OPTIONS
+    intl_options = [""] + DELIVERY_OPTIONS
+    with dm1:
+        dom_index = (
+            dom_options.index(row_data["domestic_delivery_method"])
+            if row_data.get("domestic_delivery_method") in dom_options
+            else 0
+        )
+        domestic_delivery = st.selectbox(
+            "Domestic Delivery Method", dom_options, index=dom_index,
+        )
+    with dm2:
+        intl_index = (
+            intl_options.index(row_data["international_delivery_method"])
+            if row_data.get("international_delivery_method") in intl_options
+            else 0
+        )
+        intl_delivery = st.selectbox(
+            "International Delivery Method", intl_options, index=intl_index,
+        )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Save Changes", type="primary", use_container_width=True):
+            if not intake_date:
+                st.error("Intake Date is required.")
+                return
+            if not end_date:
+                st.error("End Date is required.")
+                return
+            new_row = {
+                "program_name": program_name,
+                "intake_date": str(intake_date),
+                "end_date": str(end_date),
+                "campus": campus,
+                "hours": hours.strip(),
+                "weeks": weeks.strip(),
+                "spots_available": str(spots_available),
+                "status": status,
+                "domestic_delivery_method": domestic_delivery,
+                "international_delivery_method": intl_delivery,
+            }
+            match_dict = {
+                "program_name": str(row_data.get("program_name", "")),
+                "intake_date": str(row_data.get("intake_date", "")),
+                "campus": str(row_data.get("campus", "")),
+            }
+            idx = find_row_index_multi(SHEET_INTAKES, match_dict)
+            if idx:
+                with st.spinner("Saving..."):
+                    update_row(SHEET_INTAKES, idx, list(new_row.values()))
+                    log_update(SHEET_INTAKES, identifier, row_data, new_row)
+                    st.cache_resource.clear()
+                if "selected_intake" in st.session_state:
+                    del st.session_state["selected_intake"]
+                st.rerun()
+            else:
+                st.error("Could not find the row to update.")
+    with col2:
+        if st.button("Cancel", use_container_width=True):
+            st.rerun()
+
+
+@st.dialog("Delete Intake")
+def delete_intake_dialog(row_data):
+    """Dialog to confirm deletion of an intake."""
+    identifier = f"{row_data.get('program_name', '')} | {row_data.get('intake_date', '')} | {row_data.get('campus', '')}"
+    st.warning(f"Are you sure you want to delete this intake?\n\n**{identifier}**")
+    st.markdown("This action cannot be undone.")
+
+    for k, v in row_data.items():
+        st.text(f"{k}: {v}")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("\U0001f5d1\ufe0f Delete", type="primary", use_container_width=True):
+            match_dict = {
+                "program_name": str(row_data.get("program_name", "")),
+                "intake_date": str(row_data.get("intake_date", "")),
+                "campus": str(row_data.get("campus", "")),
+            }
+            idx = find_row_index_multi(SHEET_INTAKES, match_dict)
+            if idx:
+                with st.spinner("Deleting..."):
+                    delete_row(SHEET_INTAKES, idx)
+                    log_delete(SHEET_INTAKES, identifier, row_data)
+                    st.cache_resource.clear()
+                if "selected_intake" in st.session_state:
+                    del st.session_state["selected_intake"]
+                st.rerun()
+            else:
+                st.error("Could not find the row to delete.")
+    with col2:
+        if st.button("Cancel", use_container_width=True):
+            st.rerun()
 
 
 def render_intakes_tab():
@@ -816,101 +899,265 @@ def render_intakes_tab():
             display_df = display_df[display_df["status"] == status_filter]
         display_df = filter_dataframe(display_df, search)
 
-    display_df = display_df.copy()
-    display_df["delete"] = False
+    # Action buttons
+    has_selection = "selected_intake" in st.session_state
+    b1, b2, b3, _ = st.columns([1, 1, 1, 4])
+    with b1:
+        if st.button("\u2795 Add", use_container_width=True, key="int_add"):
+            add_intake_dialog()
+    with b2:
+        if st.button(
+            "\u270f\ufe0f Edit",
+            use_container_width=True,
+            disabled=not has_selection,
+            key="int_edit",
+        ):
+            edit_intake_dialog(st.session_state["selected_intake"])
+    with b3:
+        if st.button(
+            "\U0001f5d1\ufe0f Delete",
+            use_container_width=True,
+            disabled=not has_selection,
+            key="int_del",
+        ):
+            delete_intake_dialog(st.session_state["selected_intake"])
 
     if not programs:
         st.warning("Add programs first before managing intakes.")
 
-    edited_df = st.data_editor(
+    # Data table (read-only with selection)
+    event = st.dataframe(
         display_df,
-        column_config={
-            "program_name": st.column_config.SelectboxColumn(
-                "Program",
-                options=programs,
-                required=True,
-                width="large",
-            ),
-            "intake_date": st.column_config.TextColumn(
-                "Intake Date",
-                required=True,
-            ),
-            "end_date": st.column_config.TextColumn(
-                "End Date",
-                required=True,
-            ),
-            "campus": st.column_config.SelectboxColumn(
-                "Campus",
-                options=CAMPUS_OPTIONS,
-                required=True,
-            ),
-            "hours": st.column_config.TextColumn("Hours"),
-            "weeks": st.column_config.TextColumn("Weeks"),
-            "spots_available": st.column_config.NumberColumn(
-                "Spots",
-                min_value=0,
-                step=1,
-            ),
-            "status": st.column_config.SelectboxColumn(
-                "Status",
-                options=STATUS_OPTIONS,
-                required=True,
-            ),
-            "domestic_delivery_method": st.column_config.SelectboxColumn(
-                "Dom. Delivery",
-                options=DELIVERY_OPTIONS,
-            ),
-            "international_delivery_method": st.column_config.SelectboxColumn(
-                "Intl. Delivery",
-                options=DELIVERY_OPTIONS,
-            ),
-            "delete": st.column_config.CheckboxColumn(
-                "Delete",
-                default=False,
-                width="small",
-            ),
-        },
-        num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
-        key="intakes_editor",
+        on_select="rerun",
+        selection_mode="single-row",
+        key="int_table",
+        column_config={
+            "program_name": st.column_config.TextColumn("Program", width="large"),
+            "intake_date": st.column_config.TextColumn("Intake Date"),
+            "end_date": st.column_config.TextColumn("End Date"),
+            "campus": st.column_config.TextColumn("Campus"),
+            "hours": st.column_config.TextColumn("Hours"),
+            "weeks": st.column_config.TextColumn("Weeks"),
+            "spots_available": st.column_config.NumberColumn("Spots", min_value=0),
+            "status": st.column_config.TextColumn("Status"),
+            "domestic_delivery_method": st.column_config.TextColumn("Dom. Delivery"),
+            "international_delivery_method": st.column_config.TextColumn("Intl. Delivery"),
+        },
     )
 
-    if total > 0 or len(edited_df) > len(display_df):
+    # Track selection
+    if event and event.selection and event.selection.rows:
+        selected_idx = event.selection.rows[0]
+        st.session_state["selected_intake"] = display_df.iloc[selected_idx].to_dict()
+    else:
+        if "selected_intake" in st.session_state:
+            del st.session_state["selected_intake"]
+
+    # Show selected row info
+    if "selected_intake" in st.session_state:
+        sel = st.session_state["selected_intake"]
+        st.info(
+            f"Selected: **{sel['program_name']}** | "
+            f"{sel['intake_date']} | {sel['campus']}"
+        )
+
+    if total > 0:
         st.caption(f"Showing {len(display_df)} of {total} intakes")
-
-    # Detect changes
-    changes = detect_changes(
-        original_df=display_df.drop(columns=["delete"], errors="ignore"),
-        edited_df=edited_df,
-        key_columns=["program_name", "intake_date", "campus"],
-        data_columns=expected_cols + ["delete"],
-    )
-
-    st.markdown("")
-    confirmed = render_save_button(changes, "int_save")
-
-    if confirmed:
-        with st.spinner("Saving changes to Google Sheets..."):
-            ok, errs = apply_changes(
-                SHEET_INTAKES,
-                changes,
-                key_columns=["program_name", "intake_date", "campus"],
-                data_columns=expected_cols + ["delete"],
-                original_df=display_df.drop(columns=["delete"], errors="ignore"),
-            )
-        if errs:
-            for e in errs:
-                st.error(e)
-        if ok > 0:
-            st.success(f"Saved {ok} change{'s' if ok != 1 else ''} successfully.")
-            st.cache_resource.clear()
-            st.rerun()
 
 
 # ---------------------------------------------------------------------------
 # Tab: Fees
 # ---------------------------------------------------------------------------
+
+
+@st.dialog("Add Fee")
+def add_fee_dialog():
+    """Dialog to add a new fee."""
+    programs = get_program_names()
+    if not programs:
+        st.warning("Add programs first before adding fees.")
+        if st.button("Close", use_container_width=True):
+            st.rerun()
+        return
+
+    program_name = st.selectbox("Program *", programs)
+    effective_from = st.text_input("Effective From", placeholder="e.g. 2025-01-01")
+    fee_name = st.selectbox("Fee Name *", FEE_NAME_OPTIONS)
+
+    a1, a2 = st.columns(2)
+    with a1:
+        domestic_amount = st.number_input(
+            "Domestic Amount ($)", min_value=0.0, step=0.01, value=0.0, format="%.2f",
+        )
+    with a2:
+        international_amount = st.number_input(
+            "International Amount ($)", min_value=0.0, step=0.01, value=0.0, format="%.2f",
+        )
+
+    is_tuition = st.checkbox("Is Tuition?", value=False)
+    sort_order = st.number_input("Sort Order", min_value=1, step=1, value=1)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Save", type="primary", use_container_width=True):
+            row_values = [
+                program_name,
+                effective_from.strip(),
+                fee_name,
+                str(domestic_amount),
+                str(international_amount),
+                str(is_tuition).upper(),
+                str(sort_order),
+            ]
+            field_dict = {
+                "program_name": program_name,
+                "effective_from": effective_from.strip(),
+                "fee_name": fee_name,
+                "domestic_amount": str(domestic_amount),
+                "international_amount": str(international_amount),
+                "is_tuition": str(is_tuition).upper(),
+                "sort_order": str(sort_order),
+            }
+            identifier = f"{program_name} | {fee_name}"
+            with st.spinner("Saving..."):
+                append_row(SHEET_FEES, row_values)
+                log_create(SHEET_FEES, identifier, field_dict)
+                st.cache_resource.clear()
+            st.rerun()
+    with col2:
+        if st.button("Cancel", use_container_width=True):
+            st.rerun()
+
+
+@st.dialog("Edit Fee")
+def edit_fee_dialog(row_data):
+    """Dialog to edit an existing fee."""
+    programs = get_program_names()
+    identifier = f"{row_data.get('program_name', '')} | {row_data.get('fee_name', '')}"
+    st.caption(f"Editing: {identifier}")
+
+    prog_index = (
+        programs.index(row_data["program_name"])
+        if row_data.get("program_name") in programs
+        else 0
+    )
+    program_name = st.selectbox("Program *", programs, index=prog_index)
+    effective_from = st.text_input(
+        "Effective From",
+        value=str(row_data.get("effective_from", "")),
+    )
+
+    fee_index = (
+        FEE_NAME_OPTIONS.index(row_data["fee_name"])
+        if row_data.get("fee_name") in FEE_NAME_OPTIONS
+        else 0
+    )
+    fee_name = st.selectbox("Fee Name *", FEE_NAME_OPTIONS, index=fee_index)
+
+    a1, a2 = st.columns(2)
+    with a1:
+        domestic_amount = st.number_input(
+            "Domestic Amount ($)",
+            min_value=0.0,
+            step=0.01,
+            value=safe_float(row_data.get("domestic_amount", 0.0), 0.0),
+            format="%.2f",
+        )
+    with a2:
+        international_amount = st.number_input(
+            "International Amount ($)",
+            min_value=0.0,
+            step=0.01,
+            value=safe_float(row_data.get("international_amount", 0.0), 0.0),
+            format="%.2f",
+        )
+
+    is_tuition_val = str(row_data.get("is_tuition", "")).strip().upper() in ("TRUE", "1")
+    is_tuition = st.checkbox("Is Tuition?", value=is_tuition_val)
+    sort_order = st.number_input(
+        "Sort Order",
+        min_value=1,
+        step=1,
+        value=safe_int(row_data.get("sort_order", 1), 1),
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Save Changes", type="primary", use_container_width=True):
+            new_row = {
+                "program_name": program_name,
+                "effective_from": effective_from.strip(),
+                "fee_name": fee_name,
+                "domestic_amount": str(domestic_amount),
+                "international_amount": str(international_amount),
+                "is_tuition": str(is_tuition).upper(),
+                "sort_order": str(sort_order),
+            }
+            match_dict = {
+                "program_name": str(row_data.get("program_name", "")),
+                "fee_name": str(row_data.get("fee_name", "")),
+                "sort_order": str(safe_int(row_data.get("sort_order", 1), 1)),
+            }
+            idx = find_row_index_multi(SHEET_FEES, match_dict)
+            if idx:
+                old_row = {
+                    "program_name": str(row_data.get("program_name", "")),
+                    "effective_from": str(row_data.get("effective_from", "")),
+                    "fee_name": str(row_data.get("fee_name", "")),
+                    "domestic_amount": str(row_data.get("domestic_amount", "")),
+                    "international_amount": str(row_data.get("international_amount", "")),
+                    "is_tuition": str(row_data.get("is_tuition", "")),
+                    "sort_order": str(row_data.get("sort_order", "")),
+                }
+                with st.spinner("Saving..."):
+                    update_row(SHEET_FEES, idx, list(new_row.values()))
+                    log_update(SHEET_FEES, identifier, old_row, new_row)
+                    st.cache_resource.clear()
+                if "selected_fee" in st.session_state:
+                    del st.session_state["selected_fee"]
+                st.rerun()
+            else:
+                st.error("Could not find the row to update.")
+    with col2:
+        if st.button("Cancel", use_container_width=True):
+            st.rerun()
+
+
+@st.dialog("Delete Fee")
+def delete_fee_dialog(row_data):
+    """Dialog to confirm deletion of a fee."""
+    identifier = f"{row_data.get('program_name', '')} | {row_data.get('fee_name', '')}"
+    st.warning(f"Are you sure you want to delete this fee?\n\n**{identifier}**")
+    st.markdown("This action cannot be undone.")
+
+    for k, v in row_data.items():
+        st.text(f"{k}: {v}")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("\U0001f5d1\ufe0f Delete", type="primary", use_container_width=True):
+            match_dict = {
+                "program_name": str(row_data.get("program_name", "")),
+                "fee_name": str(row_data.get("fee_name", "")),
+                "sort_order": str(safe_int(row_data.get("sort_order", 1), 1)),
+            }
+            idx = find_row_index_multi(SHEET_FEES, match_dict)
+            if idx:
+                clean = {k: str(v) for k, v in row_data.items()}
+                with st.spinner("Deleting..."):
+                    delete_row(SHEET_FEES, idx)
+                    log_delete(SHEET_FEES, identifier, clean)
+                    st.cache_resource.clear()
+                if "selected_fee" in st.session_state:
+                    del st.session_state["selected_fee"]
+                st.rerun()
+            else:
+                st.error("Could not find the row to delete.")
+    with col2:
+        if st.button("Cancel", use_container_width=True):
+            st.rerun()
 
 
 def render_fees_tab():
@@ -967,64 +1214,73 @@ def render_fees_tab():
             display_df = display_df[display_df["program_name"] == prog_filter]
         display_df = filter_dataframe(display_df, search)
 
-    display_df = display_df.copy()
-    display_df["delete"] = False
+    # Action buttons
+    has_selection = "selected_fee" in st.session_state
+    b1, b2, b3, _ = st.columns([1, 1, 1, 4])
+    with b1:
+        if st.button("\u2795 Add", use_container_width=True, key="fee_add"):
+            add_fee_dialog()
+    with b2:
+        if st.button(
+            "\u270f\ufe0f Edit",
+            use_container_width=True,
+            disabled=not has_selection,
+            key="fee_edit",
+        ):
+            edit_fee_dialog(st.session_state["selected_fee"])
+    with b3:
+        if st.button(
+            "\U0001f5d1\ufe0f Delete",
+            use_container_width=True,
+            disabled=not has_selection,
+            key="fee_del",
+        ):
+            delete_fee_dialog(st.session_state["selected_fee"])
 
     if not programs:
         st.warning("Add programs first before managing fees.")
 
-    edited_df = st.data_editor(
+    # Data table (read-only with selection)
+    event = st.dataframe(
         display_df,
-        column_config={
-            "program_name": st.column_config.SelectboxColumn(
-                "Program",
-                options=programs,
-                required=True,
-                width="large",
-            ),
-            "effective_from": st.column_config.TextColumn(
-                "Effective From",
-                required=True,
-            ),
-            "fee_name": st.column_config.SelectboxColumn(
-                "Fee Name",
-                options=FEE_NAME_OPTIONS,
-                required=True,
-            ),
-            "domestic_amount": st.column_config.NumberColumn(
-                "Domestic $",
-                format="$%.2f",
-                min_value=0.0,
-                step=0.01,
-            ),
-            "international_amount": st.column_config.NumberColumn(
-                "International $",
-                format="$%.2f",
-                min_value=0.0,
-                step=0.01,
-            ),
-            "is_tuition": st.column_config.CheckboxColumn(
-                "Tuition?",
-                default=False,
-            ),
-            "sort_order": st.column_config.NumberColumn(
-                "Sort",
-                min_value=1,
-                step=1,
-            ),
-            "delete": st.column_config.CheckboxColumn(
-                "Delete",
-                default=False,
-                width="small",
-            ),
-        },
-        num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
-        key="fees_editor",
+        on_select="rerun",
+        selection_mode="single-row",
+        key="fee_table",
+        column_config={
+            "program_name": st.column_config.TextColumn("Program", width="large"),
+            "effective_from": st.column_config.TextColumn("Effective From"),
+            "fee_name": st.column_config.TextColumn("Fee Name"),
+            "domestic_amount": st.column_config.NumberColumn(
+                "Domestic $", format="$%.2f",
+            ),
+            "international_amount": st.column_config.NumberColumn(
+                "International $", format="$%.2f",
+            ),
+            "is_tuition": st.column_config.CheckboxColumn("Tuition?"),
+            "sort_order": st.column_config.NumberColumn("Sort"),
+        },
     )
 
-    if total > 0 or len(edited_df) > len(display_df):
+    # Track selection
+    if event and event.selection and event.selection.rows:
+        selected_idx = event.selection.rows[0]
+        st.session_state["selected_fee"] = display_df.iloc[selected_idx].to_dict()
+    else:
+        if "selected_fee" in st.session_state:
+            del st.session_state["selected_fee"]
+
+    # Show selected row info
+    if "selected_fee" in st.session_state:
+        sel = st.session_state["selected_fee"]
+        st.info(
+            f"Selected: **{sel['program_name']}** | {sel['fee_name']} "
+            f"(Dom: ${safe_float(sel.get('domestic_amount', 0)):,.2f} / "
+            f"Intl: ${safe_float(sel.get('international_amount', 0)):,.2f})"
+        )
+
+    if total > 0:
         st.caption(f"Showing {len(display_df)} of {total} fee rows")
 
     # Per-program totals when filtered
@@ -1037,45 +1293,140 @@ def render_fees_tab():
         with tc2:
             render_metric_card(f"{prog_filter} International", f"${intl_total:,.2f}")
 
-    # Detect changes — need to handle is_tuition conversion for sheets
-    changes = detect_changes(
-        original_df=display_df.drop(columns=["delete"], errors="ignore"),
-        edited_df=edited_df,
-        key_columns=["program_name", "fee_name", "sort_order"],
-        data_columns=expected_cols + ["delete"],
-    )
-
-    st.markdown("")
-    confirmed = render_save_button(changes, "fee_save")
-
-    if confirmed:
-        # Convert is_tuition back to string for Google Sheets
-        for rec in changes["added"]:
-            rec["is_tuition"] = str(rec.get("is_tuition", False)).upper()
-        for change in changes["edited"]:
-            if change["col"] == "is_tuition":
-                change["new"] = str(change["new"]).upper()
-
-        with st.spinner("Saving changes to Google Sheets..."):
-            ok, errs = apply_changes(
-                SHEET_FEES,
-                changes,
-                key_columns=["program_name", "fee_name", "sort_order"],
-                data_columns=expected_cols + ["delete"],
-                original_df=display_df.drop(columns=["delete"], errors="ignore"),
-            )
-        if errs:
-            for e in errs:
-                st.error(e)
-        if ok > 0:
-            st.success(f"Saved {ok} change{'s' if ok != 1 else ''} successfully.")
-            st.cache_resource.clear()
-            st.rerun()
-
 
 # ---------------------------------------------------------------------------
 # Tab: Outline Map
 # ---------------------------------------------------------------------------
+
+
+@st.dialog("Add Outline Mapping")
+def add_outline_dialog():
+    """Dialog to add a new outline mapping."""
+    programs = get_program_names()
+    if not programs:
+        st.warning("Add programs first before adding outline mappings.")
+        if st.button("Close", use_container_width=True):
+            st.rerun()
+        return
+
+    program_name = st.selectbox("Program *", programs)
+    outline_filename = st.text_input("Outline Filename")
+    google_drive_file_id = st.text_input("Google Drive File ID")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Save", type="primary", use_container_width=True):
+            if not program_name:
+                st.error("Program is required.")
+                return
+            row_values = [
+                program_name,
+                outline_filename.strip(),
+                google_drive_file_id.strip(),
+            ]
+            field_dict = {
+                "program_name": program_name,
+                "outline_filename": outline_filename.strip(),
+                "google_drive_file_id": google_drive_file_id.strip(),
+            }
+            with st.spinner("Saving..."):
+                append_row(SHEET_OUTLINE_MAP, row_values)
+                log_create(SHEET_OUTLINE_MAP, program_name, field_dict)
+                st.cache_resource.clear()
+            st.rerun()
+    with col2:
+        if st.button("Cancel", use_container_width=True):
+            st.rerun()
+
+
+@st.dialog("Edit Outline Mapping")
+def edit_outline_dialog(row_data):
+    """Dialog to edit an existing outline mapping."""
+    programs = get_program_names()
+    st.caption(f"Editing: {row_data.get('program_name', '')}")
+
+    prog_index = (
+        programs.index(row_data["program_name"])
+        if row_data.get("program_name") in programs
+        else 0
+    )
+    program_name = st.selectbox("Program *", programs, index=prog_index)
+    outline_filename = st.text_input(
+        "Outline Filename",
+        value=row_data.get("outline_filename", ""),
+    )
+    google_drive_file_id = st.text_input(
+        "Google Drive File ID",
+        value=row_data.get("google_drive_file_id", ""),
+    )
+
+    if google_drive_file_id.strip():
+        preview_url = f"https://drive.google.com/file/d/{google_drive_file_id.strip()}/view"
+        st.markdown(f"[Preview in Google Drive]({preview_url})")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Save Changes", type="primary", use_container_width=True):
+            new_row = {
+                "program_name": program_name,
+                "outline_filename": outline_filename.strip(),
+                "google_drive_file_id": google_drive_file_id.strip(),
+            }
+            idx = find_row_index(
+                SHEET_OUTLINE_MAP, "program_name", row_data["program_name"],
+            )
+            if idx:
+                with st.spinner("Saving..."):
+                    update_row(SHEET_OUTLINE_MAP, idx, list(new_row.values()))
+                    log_update(
+                        SHEET_OUTLINE_MAP,
+                        row_data["program_name"],
+                        row_data,
+                        new_row,
+                    )
+                    st.cache_resource.clear()
+                if "selected_outline" in st.session_state:
+                    del st.session_state["selected_outline"]
+                st.rerun()
+            else:
+                st.error("Could not find the row to update.")
+    with col2:
+        if st.button("Cancel", use_container_width=True):
+            st.rerun()
+
+
+@st.dialog("Delete Outline Mapping")
+def delete_outline_dialog(row_data):
+    """Dialog to confirm deletion of an outline mapping."""
+    st.warning(
+        f"Are you sure you want to delete the outline mapping for "
+        f"**{row_data.get('program_name', '')}**?"
+    )
+    st.markdown("This action cannot be undone.")
+
+    for k, v in row_data.items():
+        st.text(f"{k}: {v}")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("\U0001f5d1\ufe0f Delete", type="primary", use_container_width=True):
+            idx = find_row_index(
+                SHEET_OUTLINE_MAP, "program_name", row_data["program_name"],
+            )
+            if idx:
+                clean = {k: str(v) for k, v in row_data.items()}
+                with st.spinner("Deleting..."):
+                    delete_row(SHEET_OUTLINE_MAP, idx)
+                    log_delete(SHEET_OUTLINE_MAP, row_data["program_name"], clean)
+                    st.cache_resource.clear()
+                if "selected_outline" in st.session_state:
+                    del st.session_state["selected_outline"]
+                st.rerun()
+            else:
+                st.error("Could not find the row to delete.")
+    with col2:
+        if st.button("Cancel", use_container_width=True):
+            st.rerun()
 
 
 def render_outline_map_tab():
@@ -1111,108 +1462,105 @@ def render_outline_map_tab():
 
     st.markdown("---")
 
-    # Search
-    search_col, _ = st.columns([2, 3])
+    # Search + Action buttons
+    search_col, btn_col = st.columns([3, 2])
     with search_col:
         search = render_search_bar("outline_search", "Search outline mappings...")
+    with btn_col:
+        has_selection = "selected_outline" in st.session_state
+        b1, b2, b3 = st.columns(3)
+        with b1:
+            if st.button("\u2795 Add", use_container_width=True, key="outline_add"):
+                add_outline_dialog()
+        with b2:
+            if st.button(
+                "\u270f\ufe0f Edit",
+                use_container_width=True,
+                disabled=not has_selection,
+                key="outline_edit",
+            ):
+                edit_outline_dialog(st.session_state["selected_outline"])
+        with b3:
+            if st.button(
+                "\U0001f5d1\ufe0f Delete",
+                use_container_width=True,
+                disabled=not has_selection,
+                key="outline_del",
+            ):
+                delete_outline_dialog(st.session_state["selected_outline"])
 
     display_df = filter_dataframe(df, search) if not df.empty else df
-    display_df = display_df.copy()
 
     # Add preview link column for display
-    if "google_drive_file_id" in display_df.columns:
-        display_df["preview_link"] = display_df["google_drive_file_id"].apply(
+    display_with_links = display_df.copy()
+    if "google_drive_file_id" in display_with_links.columns:
+        display_with_links["preview_link"] = display_with_links["google_drive_file_id"].apply(
             lambda fid: f"https://drive.google.com/file/d/{fid}/view"
             if str(fid).strip() else ""
         )
     else:
-        display_df["preview_link"] = ""
+        display_with_links["preview_link"] = ""
 
-    display_df["delete"] = False
+    if not programs:
+        st.warning("Add programs first before managing outline mappings.")
 
-    edited_df = st.data_editor(
-        display_df,
-        column_config={
-            "program_name": st.column_config.SelectboxColumn(
-                "Program",
-                options=programs,
-                required=True,
-                width="large",
-            ),
-            "outline_filename": st.column_config.TextColumn(
-                "Outline Filename",
-                width="medium",
-            ),
-            "google_drive_file_id": st.column_config.TextColumn(
-                "Drive File ID",
-                width="medium",
-            ),
-            "preview_link": st.column_config.LinkColumn(
-                "Preview",
-                display_text="Open",
-                width="small",
-                disabled=True,
-            ),
-            "delete": st.column_config.CheckboxColumn(
-                "Delete",
-                default=False,
-                width="small",
-            ),
-        },
-        num_rows="dynamic",
+    # Data table (read-only with selection)
+    event = st.dataframe(
+        display_with_links,
         use_container_width=True,
         hide_index=True,
-        key="outline_editor",
+        on_select="rerun",
+        selection_mode="single-row",
+        key="outline_table",
+        column_config={
+            "program_name": st.column_config.TextColumn("Program", width="large"),
+            "outline_filename": st.column_config.TextColumn(
+                "Outline Filename", width="medium",
+            ),
+            "google_drive_file_id": st.column_config.TextColumn(
+                "Drive File ID", width="medium",
+            ),
+            "preview_link": st.column_config.LinkColumn(
+                "Preview", display_text="Open", width="small",
+            ),
+        },
         column_order=[
             "program_name", "outline_filename",
-            "google_drive_file_id", "preview_link", "delete",
+            "google_drive_file_id", "preview_link",
         ],
     )
+
+    # Track selection (use display_df without preview_link for stored data)
+    if event and event.selection and event.selection.rows:
+        selected_idx = event.selection.rows[0]
+        st.session_state["selected_outline"] = display_df.iloc[selected_idx].to_dict()
+    else:
+        if "selected_outline" in st.session_state:
+            del st.session_state["selected_outline"]
+
+    # Show selected row info
+    if "selected_outline" in st.session_state:
+        sel = st.session_state["selected_outline"]
+        st.info(
+            f"Selected: **{sel['program_name']}** "
+            f"({sel.get('outline_filename', 'no filename')})"
+        )
 
     if total_mappings > 0:
         st.caption(f"Showing {len(display_df)} of {total_mappings} mappings")
 
     # Programs missing outlines
     if programs:
-        mapped = set(df["program_name"].tolist()) if not df.empty and "program_name" in df.columns else set()
+        mapped = (
+            set(df["program_name"].tolist())
+            if not df.empty and "program_name" in df.columns
+            else set()
+        )
         missing = sorted(set(programs) - mapped)
         if missing:
             with st.expander(f"Programs missing outline mapping ({len(missing)})"):
                 for prog_name in missing:
                     st.markdown(f"- {prog_name}")
-
-    if not programs:
-        st.warning("Add programs first before managing outline mappings.")
-
-    # Detect changes (exclude preview_link from comparison)
-    changes = detect_changes(
-        original_df=display_df.drop(columns=["delete", "preview_link"], errors="ignore"),
-        edited_df=edited_df.drop(columns=["preview_link"], errors="ignore"),
-        key_columns=["program_name"],
-        data_columns=expected_cols + ["delete"],
-    )
-
-    st.markdown("")
-    confirmed = render_save_button(changes, "outline_save")
-
-    if confirmed:
-        with st.spinner("Saving changes to Google Sheets..."):
-            ok, errs = apply_changes(
-                SHEET_OUTLINE_MAP,
-                changes,
-                key_columns=["program_name"],
-                data_columns=expected_cols + ["delete"],
-                original_df=display_df.drop(
-                    columns=["delete", "preview_link"], errors="ignore"
-                ),
-            )
-        if errs:
-            for e in errs:
-                st.error(e)
-        if ok > 0:
-            st.success(f"Saved {ok} change{'s' if ok != 1 else ''} successfully.")
-            st.cache_resource.clear()
-            st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -1390,25 +1738,23 @@ def render_contract_log_tab():
 def main():
     st.set_page_config(
         page_title="WCC Contract Admin",
-        page_icon="📋",
+        page_icon="\U0001f4cb",
         layout="wide",
         initial_sidebar_state="expanded",
     )
 
-    # Custom CSS for data-dense dashboard
+    # Custom CSS — theme-aware (no hardcoded text/background colors on main page)
     st.markdown("""
     <style>
-        /* Page background */
-        .stApp { background-color: #F8FAFC; }
-
-        /* Sidebar styling */
+        /* Sidebar styling — always dark */
         [data-testid="stSidebar"] {
             background-color: #1E293B;
         }
         [data-testid="stSidebar"] .stMarkdown,
         [data-testid="stSidebar"] .stMarkdown p,
         [data-testid="stSidebar"] label,
-        [data-testid="stSidebar"] .stRadio label {
+        [data-testid="stSidebar"] .stRadio label,
+        [data-testid="stSidebar"] .stButton button {
             color: #F8FAFC !important;
         }
         [data-testid="stSidebar"] .stRadio > div[role="radiogroup"] > label {
@@ -1427,13 +1773,12 @@ def main():
             color: #FFFFFF !important;
         }
 
-        /* Metric cards */
+        /* Metric cards — adapt to theme */
         [data-testid="stMetric"] {
-            background: white;
             padding: 16px 20px;
             border-radius: 8px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-            border: 1px solid #E2E8F0;
+            border: 1px solid rgba(128,128,128,0.2);
         }
         div[data-testid="stMetricValue"] {
             font-size: 28px;
@@ -1441,46 +1786,21 @@ def main():
             font-weight: 700;
         }
         div[data-testid="stMetricLabel"] {
-            color: #64748B;
             font-size: 13px;
             font-weight: 500;
             text-transform: uppercase;
             letter-spacing: 0.05em;
         }
 
-        /* Data editor / dataframe styling */
+        /* Data table styling */
         .stDataFrame, .stDataEditor {
             font-size: 14px;
         }
         [data-testid="stDataFrameResizable"] {
-            border: 1px solid #E2E8F0;
             border-radius: 8px;
             overflow: hidden;
             box-shadow: 0 1px 3px rgba(0,0,0,0.06);
         }
-
-        /* Table header styling */
-        .stDataFrame thead th {
-            background-color: #F1F5F9 !important;
-            color: #475569 !important;
-            font-weight: 600 !important;
-            text-transform: uppercase;
-            font-size: 12px;
-            letter-spacing: 0.05em;
-        }
-
-        /* Table row hover */
-        .stDataFrame tbody tr:hover {
-            background-color: #F8FAFC !important;
-        }
-
-        /* Alternate row colors */
-        .stDataFrame tbody tr:nth-child(even) {
-            background-color: #FAFBFC;
-        }
-
-        /* Title text */
-        h1 { color: #1E293B; }
 
         /* Primary button accent */
         .stButton > button[kind="primary"] {
@@ -1490,26 +1810,6 @@ def main():
         .stButton > button[kind="primary"]:hover {
             background-color: #1D4ED8;
             border-color: #1D4ED8;
-        }
-
-        /* Save button CTA styling */
-        .stButton > button[kind="primary"][data-testid*="save"] {
-            background-color: #F97316;
-            border-color: #F97316;
-        }
-        .stButton > button[kind="primary"][data-testid*="save"]:hover {
-            background-color: #EA580C;
-            border-color: #EA580C;
-        }
-
-        /* Caption styling */
-        .stCaption {
-            color: #94A3B8;
-        }
-
-        /* Divider */
-        hr {
-            border-color: #E2E8F0;
         }
 
         /* Search input */
@@ -1535,7 +1835,7 @@ def main():
             unsafe_allow_html=True,
         )
         st.markdown(
-            '<p style="color:#94A3B8;font-size:13px;margin-top:0;padding-left:4px;">'
+            '<p style="color:#94A3B8;font-size:13px;margin-top:4px;padding-left:4px;">'
             "Data Management Dashboard</p>",
             unsafe_allow_html=True,
         )
@@ -1547,14 +1847,14 @@ def main():
         selected_tab = st.radio(
             "Navigation",
             selectable_items,
-            format_func=lambda x: f"{NAV_ICONS.get(x, '📄')} {x}",
+            format_func=lambda x: f"{NAV_ICONS.get(x, '\U0001f4c4')} {x}",
             label_visibility="collapsed",
         )
 
         st.markdown("---")
 
         if st.button(
-            "🔄 Refresh Data",
+            "\U0001f504 Refresh Data",
             use_container_width=True,
         ):
             st.cache_resource.clear()
@@ -1563,7 +1863,7 @@ def main():
         st.markdown("---")
 
         if st.button(
-            "🚪 Logout",
+            "\U0001f6aa Logout",
             use_container_width=True,
             type="secondary",
         ):
@@ -1578,7 +1878,7 @@ def main():
         )
 
     # --- Main content area ---
-    icon = NAV_ICONS.get(selected_tab, "📄")
+    icon = NAV_ICONS.get(selected_tab, "\U0001f4c4")
     st.title(f"{icon} {selected_tab}")
 
     if selected_tab == "Programs":
