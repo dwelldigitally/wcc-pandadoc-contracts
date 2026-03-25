@@ -884,11 +884,31 @@ def main():
     wait_for_document_draft(doc_id)
     print("   Document is draft, ready for sections.")
 
-    # Step 7: Add signing template as last section
+    # Step 7: Add signing template as last section (with role mapping)
     print(f"\n7. Adding signing page as section...")
+    section_payload = {
+        "template_uuid": SIGNING_TEMPLATE_ID,
+        "name": "Signatures",
+        "recipients": [
+            {
+                "email": advisor.get("email", ""),
+                "first_name": advisor.get("firstName", ""),
+                "last_name": advisor.get("lastName", ""),
+                "role": "Advisor",
+                "signing_order": 1,
+            },
+            {
+                "email": contact.get("email", ""),
+                "first_name": contact.get("firstname", ""),
+                "last_name": contact.get("lastname", ""),
+                "role": "Client",
+                "signing_order": 2,
+            },
+        ],
+    }
     signing_result = api_post(
         f"{PANDADOC_BASE_URL}/documents/{doc_id}/sections/uploads",
-        {"template_uuid": SIGNING_TEMPLATE_ID, "name": "Signatures"},
+        section_payload,
         PANDADOC_API_KEY,
         token_type="API-Key",
     )
