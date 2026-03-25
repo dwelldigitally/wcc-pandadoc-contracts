@@ -70,12 +70,12 @@ NAV_ITEMS = [
 ]
 
 NAV_ICONS = {
-    "Programs": "graduation-cap",
-    "Intakes": "calendar-range",
-    "Fees": "dollar-sign",
-    "Outline Map": "clipboard-list",
-    "Audit Log": "file-text",
-    "Contract Log": "file-signature",
+    "Programs": "🎓",
+    "Intakes": "📅",
+    "Fees": "💲",
+    "Outline Map": "📋",
+    "Audit Log": "📝",
+    "Contract Log": "📄",
 }
 
 # ---------------------------------------------------------------------------
@@ -1390,7 +1390,7 @@ def render_contract_log_tab():
 def main():
     st.set_page_config(
         page_title="WCC Contract Admin",
-        page_icon=":clipboard:",
+        page_icon="📋",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -1456,6 +1456,27 @@ def main():
             border: 1px solid #E2E8F0;
             border-radius: 8px;
             overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+
+        /* Table header styling */
+        .stDataFrame thead th {
+            background-color: #F1F5F9 !important;
+            color: #475569 !important;
+            font-weight: 600 !important;
+            text-transform: uppercase;
+            font-size: 12px;
+            letter-spacing: 0.05em;
+        }
+
+        /* Table row hover */
+        .stDataFrame tbody tr:hover {
+            background-color: #F8FAFC !important;
+        }
+
+        /* Alternate row colors */
+        .stDataFrame tbody tr:nth-child(even) {
+            background-color: #FAFBFC;
         }
 
         /* Title text */
@@ -1526,14 +1547,14 @@ def main():
         selected_tab = st.radio(
             "Navigation",
             selectable_items,
-            format_func=lambda x: f":{NAV_ICONS.get(x, 'page')}: {x}",
+            format_func=lambda x: f"{NAV_ICONS.get(x, '📄')} {x}",
             label_visibility="collapsed",
         )
 
         st.markdown("---")
 
         if st.button(
-            ":arrows_counterclockwise: Refresh Data",
+            "🔄 Refresh Data",
             use_container_width=True,
         ):
             st.cache_resource.clear()
@@ -1542,7 +1563,7 @@ def main():
         st.markdown("---")
 
         if st.button(
-            ":door: Logout",
+            "🚪 Logout",
             use_container_width=True,
             type="secondary",
         ):
@@ -1557,11 +1578,8 @@ def main():
         )
 
     # --- Main content area ---
-    icon = NAV_ICONS.get(selected_tab, "page")
-    st.markdown(
-        f'<h1 style="color:#1E293B;">:{icon}: {selected_tab}</h1>',
-        unsafe_allow_html=True,
-    )
+    icon = NAV_ICONS.get(selected_tab, "📄")
+    st.title(f"{icon} {selected_tab}")
 
     if selected_tab == "Programs":
         render_programs_tab()
