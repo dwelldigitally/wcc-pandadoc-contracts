@@ -150,8 +150,9 @@ def open_spreadsheet():
     return client.open_by_key(sheet_id)
 
 
+@st.cache_data(ttl=60)
 def read_sheet(sheet_name: str) -> pd.DataFrame:
-    """Read a worksheet into a DataFrame. Returns empty DataFrame if sheet missing."""
+    """Read a worksheet into a DataFrame. Cached for 60s to avoid API rate limits."""
     try:
         spreadsheet = open_spreadsheet()
         worksheet = spreadsheet.worksheet(sheet_name)
@@ -162,6 +163,11 @@ def read_sheet(sheet_name: str) -> pd.DataFrame:
     except Exception as exc:
         st.error(f"Error reading sheet '{sheet_name}': {exc}")
         return pd.DataFrame()
+
+
+def invalidate_sheet_cache():
+    """Clear the read_sheet cache after writes."""
+    read_sheet.clear()
 
 
 def ensure_audit_sheet():
@@ -354,6 +360,7 @@ def check_auth():
             return False
         if password == expected:
             st.session_state["authenticated"] = True
+            invalidate_sheet_cache()
             st.rerun()
         else:
             st.error("Incorrect password.")
@@ -434,7 +441,8 @@ def add_program_dialog():
                     "program_code": code.strip(),
                     "credential": credential,
                 })
-                st.cache_resource.clear()
+                invalidate_sheet_cache()
+            invalidate_sheet_cache()
             st.rerun()
     with col2:
         if st.button("Cancel", use_container_width=True):
@@ -474,9 +482,10 @@ def edit_program_dialog(row_data):
                 with st.spinner("Saving..."):
                     update_row(SHEET_PROGRAMS, idx, list(new_row.values()))
                     log_update(SHEET_PROGRAMS, row_data["program_name"], row_data, new_row)
-                    st.cache_resource.clear()
+                    invalidate_sheet_cache()
                 if "selected_program" in st.session_state:
                     del st.session_state["selected_program"]
+                invalidate_sheet_cache()
                 st.rerun()
             else:
                 st.error("Could not find the row to update.")
@@ -502,9 +511,10 @@ def delete_program_dialog(row_data):
                 with st.spinner("Deleting..."):
                     delete_row(SHEET_PROGRAMS, idx)
                     log_delete(SHEET_PROGRAMS, row_data["program_name"], row_data)
-                    st.cache_resource.clear()
+                    invalidate_sheet_cache()
                 if "selected_program" in st.session_state:
                     del st.session_state["selected_program"]
+                invalidate_sheet_cache()
                 st.rerun()
             else:
                 st.error("Could not find the row to delete.")
@@ -674,7 +684,8 @@ def add_intake_dialog():
             with st.spinner("Saving..."):
                 append_row(SHEET_INTAKES, row_values)
                 log_create(SHEET_INTAKES, identifier, field_dict)
-                st.cache_resource.clear()
+                invalidate_sheet_cache()
+            invalidate_sheet_cache()
             st.rerun()
     with col2:
         if st.button("Cancel", use_container_width=True):
@@ -791,9 +802,10 @@ def edit_intake_dialog(row_data):
                 with st.spinner("Saving..."):
                     update_row(SHEET_INTAKES, idx, list(new_row.values()))
                     log_update(SHEET_INTAKES, identifier, row_data, new_row)
-                    st.cache_resource.clear()
+                    invalidate_sheet_cache()
                 if "selected_intake" in st.session_state:
                     del st.session_state["selected_intake"]
+                invalidate_sheet_cache()
                 st.rerun()
             else:
                 st.error("Could not find the row to update.")
@@ -825,9 +837,10 @@ def delete_intake_dialog(row_data):
                 with st.spinner("Deleting..."):
                     delete_row(SHEET_INTAKES, idx)
                     log_delete(SHEET_INTAKES, identifier, row_data)
-                    st.cache_resource.clear()
+                    invalidate_sheet_cache()
                 if "selected_intake" in st.session_state:
                     del st.session_state["selected_intake"]
+                invalidate_sheet_cache()
                 st.rerun()
             else:
                 st.error("Could not find the row to delete.")
@@ -1021,7 +1034,8 @@ def add_fee_dialog():
             with st.spinner("Saving..."):
                 append_row(SHEET_FEES, row_values)
                 log_create(SHEET_FEES, identifier, field_dict)
-                st.cache_resource.clear()
+                invalidate_sheet_cache()
+            invalidate_sheet_cache()
             st.rerun()
     with col2:
         if st.button("Cancel", use_container_width=True):
@@ -1111,9 +1125,10 @@ def edit_fee_dialog(row_data):
                 with st.spinner("Saving..."):
                     update_row(SHEET_FEES, idx, list(new_row.values()))
                     log_update(SHEET_FEES, identifier, old_row, new_row)
-                    st.cache_resource.clear()
+                    invalidate_sheet_cache()
                 if "selected_fee" in st.session_state:
                     del st.session_state["selected_fee"]
+                invalidate_sheet_cache()
                 st.rerun()
             else:
                 st.error("Could not find the row to update.")
@@ -1146,9 +1161,10 @@ def delete_fee_dialog(row_data):
                 with st.spinner("Deleting..."):
                     delete_row(SHEET_FEES, idx)
                     log_delete(SHEET_FEES, identifier, clean)
-                    st.cache_resource.clear()
+                    invalidate_sheet_cache()
                 if "selected_fee" in st.session_state:
                     del st.session_state["selected_fee"]
+                invalidate_sheet_cache()
                 st.rerun()
             else:
                 st.error("Could not find the row to delete.")
@@ -1328,7 +1344,8 @@ def add_outline_dialog():
             with st.spinner("Saving..."):
                 append_row(SHEET_OUTLINE_MAP, row_values)
                 log_create(SHEET_OUTLINE_MAP, program_name, field_dict)
-                st.cache_resource.clear()
+                invalidate_sheet_cache()
+            invalidate_sheet_cache()
             st.rerun()
     with col2:
         if st.button("Cancel", use_container_width=True):
@@ -1380,9 +1397,10 @@ def edit_outline_dialog(row_data):
                         row_data,
                         new_row,
                     )
-                    st.cache_resource.clear()
+                    invalidate_sheet_cache()
                 if "selected_outline" in st.session_state:
                     del st.session_state["selected_outline"]
+                invalidate_sheet_cache()
                 st.rerun()
             else:
                 st.error("Could not find the row to update.")
@@ -1414,9 +1432,10 @@ def delete_outline_dialog(row_data):
                 with st.spinner("Deleting..."):
                     delete_row(SHEET_OUTLINE_MAP, idx)
                     log_delete(SHEET_OUTLINE_MAP, row_data["program_name"], clean)
-                    st.cache_resource.clear()
+                    invalidate_sheet_cache()
                 if "selected_outline" in st.session_state:
                     del st.session_state["selected_outline"]
+                invalidate_sheet_cache()
                 st.rerun()
             else:
                 st.error("Could not find the row to delete.")
@@ -1831,7 +1850,7 @@ def main():
             "\U0001f504 Refresh Data",
             use_container_width=True,
         ):
-            st.cache_resource.clear()
+            invalidate_sheet_cache()
             st.rerun()
 
         st.markdown("---")
