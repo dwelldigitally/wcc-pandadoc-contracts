@@ -26,15 +26,18 @@ Note: hours, weeks, and delivery method are now on the **Intakes** tab (per-coho
 
 ## Tab 2: Fees
 
-One row per program + intake + residency tier. Each fee type is a **column**.
+One row per program + effective date + residency tier. Each fee type is a **column**.
 Only columns with a non-empty numeric value are included on the contract.
+
+A fee row applies to **its effective_from date and all future intakes** until a
+newer row (same program + residency, later effective_from) supersedes it.
 
 ### Key columns (required)
 
 | Column | Example | Notes |
 |--------|---------|-------|
 | program_name | Health Care Assistant Diploma | Must match Tab 1 exactly |
-| intake_date | 2026-05-05 | Must match Tab 3 exactly (YYYY-MM-DD) |
+| effective_from | 2026-01-01 | Fees apply from this date onward (YYYY-MM-DD) |
 | residency | domestic | `domestic` or `international` |
 
 ### Fee type columns (all optional — leave blank if N/A)
@@ -65,22 +68,36 @@ can add new fee type columns without any code changes.
 1. **Scholarship is always negative** — Excel data validation enforces `<= 0`
 2. **Total column** is an Excel `=SUM()` formula — the script ignores it
 3. **Empty = not applicable** — only non-zero numeric cells become fee line items
-4. **Two rows per program+intake** — one `domestic`, one `international`
+4. **Two rows per effective_from date** — one `domestic`, one `international`
 5. **Column order = display order** on the contract (left to right)
 6. **Adding a new fee type** — just add a new column. Script picks it up automatically.
+7. **Versioning** — to update fees, add a new pair of rows with a later `effective_from`.
+   The script picks the most recent `effective_from <= intake_date` for the student's intake.
 
-### Example rows for HCA (May 2026 intake):
+### How fee versioning works
 
-| program_name | intake_date | residency | Application Fee | Tuition Fee | Course Materials | Books | Scholarship | Total |
+```
+Scenario: HCA tuition increases from $7,000 to $7,500 starting Sep 2026.
+
+Row 1: effective_from=2026-01-01  domestic  Tuition Fee=7000  ← applies to Jan–Aug intakes
+Row 2: effective_from=2026-09-01  domestic  Tuition Fee=7500  ← applies to Sep+ intakes
+
+Student enrolling in May 2026 intake → script finds Row 1 (Jan ≤ May)
+Student enrolling in Oct 2026 intake → script finds Row 2 (Sep ≤ Oct)
+```
+
+### Example rows for HCA:
+
+| program_name | effective_from | residency | Application Fee | Tuition Fee | Course Materials | Books | Scholarship | Total |
 |---|---|---|---|---|---|---|---|---|
-| Health Care Assistant Diploma | 2026-05-05 | domestic | 250 | 7000 | 75 | 175 | | 7500 |
-| Health Care Assistant Diploma | 2026-05-05 | international | 250 | 9000 | 75 | 175 | -2000 | 7500 |
+| Health Care Assistant Diploma | 2026-01-01 | domestic | 250 | 7000 | 75 | 175 | | 7500 |
+| Health Care Assistant Diploma | 2026-01-01 | international | 250 | 9000 | 75 | 175 | -2000 | 7500 |
 
 ### Example rows for Aviation PPL:
 
-| program_name | intake_date | residency | Application Fee | Ground School Fee | Flight Dual | Flight Solo | Flight Prep Ground | Course Materials | Fuel | Books | Scholarship | Total |
+| program_name | effective_from | residency | Application Fee | Ground School Fee | Flight Dual | Flight Solo | Flight Prep Ground | Course Materials | Fuel | Books | Scholarship | Total |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Aviation PPL Diploma | 2026-06-01 | domestic | 250 | 500 | 8700 | 3375 | 1050 | 750 | 2250 | 175 | | 17050 |
+| Aviation PPL Diploma | 2026-01-01 | domestic | 250 | 500 | 8700 | 3375 | 1050 | 750 | 2250 | 175 | | 17050 |
 
 ---
 
@@ -124,8 +141,8 @@ and delivery method (these vary per cohort, not per program).
    → intake_date=2026-05-05, end_date=2026-10-30, campus=Surrey
    → hours=775, weeks=26, domestic_delivery=In-class
 
-4. Script reads Tab 2 (Fees), finds row matching:
-   program_name + intake_date + residency="domestic"
+4. Script reads Tab 2 (Fees), finds the most recent row where:
+   program_name matches AND residency="domestic" AND effective_from <= intake_date
    → Reads ALL non-empty fee columns (Application Fee=250, Tuition Fee=7000, ...)
    → Each non-zero column becomes a fee line item on the contract
    → Scholarship column (if present) appears as a negative line item

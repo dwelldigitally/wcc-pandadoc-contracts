@@ -417,13 +417,14 @@ def main() -> None:
         ("- Note: hours, weeks, delivery method are on the Intakes tab (per cohort)", None),
         ("", None),
         ("FEES TAB (column-based layout)", Font(bold=True, size=11, color="1F4E79")),
-        ("- One row per program + intake date + residency tier (domestic / international)", None),
+        ("- One row per program + effective_from date + residency tier (domestic / international)", None),
         ("- Each fee type is a COLUMN. Leave blank if N/A for that program.", None),
         ("- Amounts are numbers only — NO $ signs, NO commas", None),
         ("- Column order = display order on the contract (left to right)", None),
         ("- Scholarship column: ALWAYS a negative number (reduces the total)", None),
         ("- Total column: Excel SUM formula — do NOT edit, it auto-calculates", None),
         ("- To add a NEW fee type: insert a column before Scholarship", None),
+        ("- To update fees: add new rows with a later effective_from date (old rows still apply to earlier intakes)", None),
         ("", None),
         ("INTAKES TAB", Font(bold=True, size=11, color="1F4E79")),
         ("- One row per intake (enrollment window) per program", None),
@@ -598,7 +599,7 @@ def main() -> None:
     ws_fees = wb.create_sheet("Fees")
 
     # Headers: key columns + fee columns + Total
-    fee_headers = ["program_name", "intake_date", "residency"] + FEE_COLUMNS + ["Total"]
+    fee_headers = ["program_name", "effective_from", "residency"] + FEE_COLUMNS + ["Total"]
     for ci, h in enumerate(fee_headers, 1):
         ws_fees.cell(row=1, column=ci, value=h)
 
@@ -613,21 +614,19 @@ def main() -> None:
         start_color="548235", end_color="548235", fill_type="solid"
     )
 
-    # Populate rows: for each intake, create domestic + international rows
+    # Populate rows: one domestic + one international row per program
+    # effective_from defaults to 2026-01-01 (from CSV data)
+    # Finance adds new rows with later effective_from when fees change
     row_num = 2
-    # Track which programs we've seen intakes for
-    programs_with_intakes = set()
+    effective_from = "2026-01-01"
 
-    for intake in intakes:
-        prog_name = intake["program_name"]
-        intake_date = intake["intake_date"]
-        programs_with_intakes.add(prog_name)
-
+    for prog in programs_raw:
+        prog_name = prog["program_name"]
         prog_fees = pivoted.get(prog_name, {"domestic": {}, "international": {}})
 
         for residency in ["domestic", "international"]:
             ws_fees.cell(row=row_num, column=1, value=prog_name)
-            ws_fees.cell(row=row_num, column=2, value=intake_date)
+            ws_fees.cell(row=row_num, column=2, value=effective_from)
             ws_fees.cell(row=row_num, column=3, value=residency)
 
             tier_fees = prog_fees.get(residency, {})
@@ -770,7 +769,7 @@ def main() -> None:
     print(f"  Instructions:  info tab (green)")
     print(f"  Programs:      {prog_count} rows")
     print(f"  Intakes:       {intake_count} rows")
-    print(f"  Fees:          {fee_count} rows ({fee_count // 2} program+intake combos x 2 residency tiers)")
+    print(f"  Fees:          {fee_count} rows ({fee_count // 2} programs x 2 residency tiers)")
     print(f"  Outline Map:   {outline_count} rows")
     print(f"  Fee columns:   {len(FEE_COLUMNS)} types + Total")
     print(f"\nValidation rules applied:")

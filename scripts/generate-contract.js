@@ -220,21 +220,29 @@ function lookupProgram(programs, programName) {
 }
 
 // Columns in the Fees tab that are keys, not fee amounts
-const FEE_KEY_COLUMNS = ['program_name', 'intake_date', 'residency', 'total'];
+const FEE_KEY_COLUMNS = ['program_name', 'effective_from', 'residency', 'total'];
 
 /**
- * Looks up fees for a program + intake + residency tier.
+ * Looks up fees for a program + residency tier using effective_from date logic.
+ * Finds the most recent fee row where effective_from <= intakeDate.
  * Returns an array of { fee_name, amount } extracted from all non-empty fee columns.
  * Column order in the sheet = display order on the contract.
  */
 function lookupFees(feeRows, programName, intakeDate, residencyTier) {
-  const row = feeRows.find(
+  // Filter to matching program + residency, then pick the most recent effective_from <= intakeDate
+  const candidates = feeRows.filter(
     (r) =>
       r.program_name.toLowerCase() === programName.toLowerCase() &&
-      r.intake_date === intakeDate &&
-      r.residency.toLowerCase() === residencyTier.toLowerCase()
+      r.residency.toLowerCase() === residencyTier.toLowerCase() &&
+      r.effective_from <= intakeDate
   );
-  if (!row) return [];
+
+  if (candidates.length === 0) return [];
+
+  // Pick the row with the latest effective_from (most recent fee schedule)
+  const row = candidates.sort((a, b) =>
+    b.effective_from.localeCompare(a.effective_from)
+  )[0];
 
   // Every column that isn't a key column and has a non-zero numeric value is a fee
   const fees = [];
@@ -512,12 +520,12 @@ async function main() {
       console.log('  → No upcoming intake found (advisor will fill dates manually)');
     }
 
-    // Look up fees by program + intake + residency (column-based)
+    // Look up fees by program + residency, effective_from <= intake date
     const intakeDate = intake?.intake_date || '';
     const fees = lookupFees(sheetData.fees, programName, intakeDate, tier.toLowerCase());
     if (fees.length === 0) {
       throw new Error(
-        `No fees found for "${programName}" / ${intakeDate} / ${tier.toLowerCase()} in sheet.`
+        `No fees found for "${programName}" / ${tier.toLowerCase()} with effective_from <= ${intakeDate || '(no intake)'}.`
       );
     }
     console.log(`  → Found ${fees.length} fee items:`);
