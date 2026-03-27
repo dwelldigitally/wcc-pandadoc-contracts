@@ -476,11 +476,14 @@ def fill_program_info(table, program, intake, delivery_method=""):
     # Handled by fill_all_dropdowns() — don't write here
 
 
-def fill_fees_table(table, fees, amount_col):
+def fill_fees_table(table, fee_items, amount_col=None):
     """Fill Table 6 — Program Costs (7 rows x 2 cols).
 
     Deep-copies row 1 (first data row) for each fee to preserve all XML
     formatting (borders, shading, font, cell widths). Only changes text.
+
+    fee_items: list of {name, amount, isTuition} dicts from resolve_fee_amounts()
+    amount_col: ignored in v3 schema (kept for signature compatibility)
     """
     tbl = table._tbl
     num_rows = len(table.rows)
@@ -497,8 +500,8 @@ def fill_fees_table(table, fees, amount_col):
 
     # Add one row per fee item (deep-copied from data row template)
     grand_total = 0.0
-    for fee in fees:
-        amount = float(fee.get(amount_col, 0) or 0)
+    for fee in fee_items:
+        amount = float(fee.get("amount", 0) or 0)
         grand_total += amount
         amount_str = f"${amount:,.2f}"
 
@@ -507,13 +510,14 @@ def fill_fees_table(table, fees, amount_col):
         row = table.rows[-1]
 
         # Cell 0: fee name — replace existing text in runs
+        fee_name = fee.get("name", "")
         cell0 = row.cells[0]
         if cell0.paragraphs[0].runs:
-            cell0.paragraphs[0].runs[0].text = fee["fee_name"]
+            cell0.paragraphs[0].runs[0].text = fee_name
             for r in cell0.paragraphs[0].runs[1:]:
                 r.text = ""
         else:
-            run = cell0.paragraphs[0].add_run(fee["fee_name"])
+            run = cell0.paragraphs[0].add_run(fee_name)
             run.font.name = "Times New Roman"
             run.font.size = 127000
 
@@ -983,15 +987,15 @@ def main():
         if delivery_method:
             print(f"   Delivery: {delivery_method} ({tier})")
 
-    # Step 3c: Match fees using effective_from logic
+    # Step 3c: Match fees using effective_from logic (column-based schema v3)
     reference_date = selected_intake_date or (intake.get("intake_date") if intake else "") or datetime.now(PST).strftime("%Y-%m-%d")
-    matched_fees, effective_from = match_fees(data["fees"], program_name, reference_date)
+    residency_tier = "domestic" if domestic else "international"
+    matched_fees, effective_from = match_fees(data["fees"], program_name, reference_date, residency_tier)
     if not matched_fees:
-        print(f"   ERROR: No fees found for '{program_name}' effective on {reference_date}.")
+        print(f"   ERROR: No fees found for '{program_name}' / {residency_tier} effective on {reference_date}.")
         sys.exit(1)
 
     fee_items, total = resolve_fee_amounts(matched_fees, domestic)
-    amount_col = "domestic_amount" if domestic else "international_amount"
 
     print(f"   {len(fee_items)} fee items ({tier}, effective from {effective_from}):")
     for fi in fee_items:
@@ -1010,8 +1014,8 @@ def main():
         output_path=output_path,
         contact=contact,
         program=program,
-        fees=matched_fees,
-        amount_col=amount_col,
+        fees=fee_items,
+        amount_col=None,
         intake=intake,
         delivery_method=delivery_method,
     )

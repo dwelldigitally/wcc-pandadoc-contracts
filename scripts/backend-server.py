@@ -337,7 +337,8 @@ def get_program_data(program_name, residence_status, intake_date=None, contact=N
 
     # Fee matching: use intake_date if provided, otherwise today
     reference_date = intake_date or datetime.now(PST).strftime("%Y-%m-%d")
-    matched_fees, effective_from = match_fees(_DATA["fees"], program_name, reference_date)
+    residency_tier = "domestic" if domestic in (True, None) else "international"
+    matched_fees, effective_from = match_fees(_DATA["fees"], program_name, reference_date, residency_tier)
     fee_items, total = resolve_fee_amounts(matched_fees, domestic)
 
     # Outline check — requires a Google Drive file ID
