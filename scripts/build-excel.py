@@ -731,13 +731,14 @@ def main() -> None:
     # TAB 5 — Outline Map
     # ==================================================================
     ws_outline = wb.create_sheet("Outline Map")
-    outline_headers = ["program_name", "outline_filename"]
+    outline_headers = ["program_name", "outline_filename", "google_drive_file_id"]
     for ci, h in enumerate(outline_headers, 1):
         ws_outline.cell(row=1, column=ci, value=h)
 
     for ri, row in enumerate(outlines_raw, 2):
         ws_outline.cell(row=ri, column=1, value=row.get("program_name", ""))
         ws_outline.cell(row=ri, column=2, value=row.get("outline_filename", ""))
+        ws_outline.cell(row=ri, column=3, value=row.get("google_drive_file_id", ""))
 
     style_header(ws_outline, len(outline_headers))
     auto_width(ws_outline)
