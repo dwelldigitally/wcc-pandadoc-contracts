@@ -115,8 +115,8 @@ and delivery method (these vary per cohort, not per program).
 | schedule | Full-Time | Full-Time or Part-Time |
 | hours | 775 | Total program hours for this cohort |
 | weeks | 26 | Duration in weeks for this cohort |
-| domestic_delivery | In-class | Delivery method for domestic students |
-| international_delivery | Distance-Synchronous | Delivery method for international students |
+| domestic_delivery_method | In-class | Delivery method for domestic students |
+| international_delivery_method | Distance-Synchronous | Delivery method for international students |
 | spots_available | 5 | Optional: remaining spots |
 | status | Open | Open / Closed / Waitlist |
 
@@ -139,7 +139,7 @@ and delivery method (these vary per cohort, not per program).
 
 3. Script reads Tab 3 (Intakes), finds next open intake:
    → intake_date=2026-05-05, end_date=2026-10-30, campus=Surrey
-   → hours=775, weeks=26, domestic_delivery=In-class
+   → hours=775, weeks=26, domestic_delivery_method=In-class
 
 4. Script reads Tab 2 (Fees), finds the most recent row where:
    program_name matches AND residency="domestic" AND effective_from <= intake_date

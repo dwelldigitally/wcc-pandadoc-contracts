@@ -362,8 +362,8 @@ def generate_intakes(programs_raw: list[dict[str, str]]) -> list[dict[str, Any]]
                     "schedule": random.choice(["Full-Time", "Part-Time"]),
                     "hours": hours or "",
                     "weeks": weeks or "",
-                    "domestic_delivery": dom_delivery,
-                    "international_delivery": intl_delivery,
+                    "domestic_delivery_method": dom_delivery,
+                    "international_delivery_method": intl_delivery,
                     "spots_available": spots,
                     "status": status,
                 }
@@ -429,7 +429,7 @@ def main() -> None:
         ("INTAKES TAB", Font(bold=True, size=11, color="1F4E79")),
         ("- One row per intake (enrollment window) per program", None),
         ("- hours, weeks, delivery method are PER COHORT — not per program", None),
-        ("- domestic_delivery / international_delivery can differ for the same intake", None),
+        ("- domestic_delivery_method / international_delivery_method can differ for the same intake", None),
         ("- intake_date / end_date format: YYYY-MM-DD", None),
         ("- status: Open = available, Closed = hidden from advisors, Waitlist = full but accepting", None),
         ("", None),
@@ -508,8 +508,8 @@ def main() -> None:
         "schedule",           # E
         "hours",              # F
         "weeks",              # G
-        "domestic_delivery",  # H
-        "international_delivery",  # I
+        "domestic_delivery_method",  # H
+        "international_delivery_method",  # I
         "spots_available",    # J
         "status",             # K
     ]
@@ -526,8 +526,8 @@ def main() -> None:
         ws_intakes.cell(row=ri, column=6, value=h_val if h_val else None)
         w_val = intake["weeks"]
         ws_intakes.cell(row=ri, column=7, value=w_val if w_val else None)
-        ws_intakes.cell(row=ri, column=8, value=intake["domestic_delivery"])
-        ws_intakes.cell(row=ri, column=9, value=intake["international_delivery"])
+        ws_intakes.cell(row=ri, column=8, value=intake["domestic_delivery_method"])
+        ws_intakes.cell(row=ri, column=9, value=intake["international_delivery_method"])
         ws_intakes.cell(row=ri, column=10, value=int(intake["spots_available"]))
         ws_intakes.cell(row=ri, column=11, value=intake["status"])
 

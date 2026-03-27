@@ -315,8 +315,8 @@ function buildDocument(hubspotData, program, fees, intake, domestic) {
 
   // Delivery method varies by residency within the same cohort
   const deliveryMethod = domestic
-    ? (intake?.domestic_delivery || '')
-    : (intake?.international_delivery || '');
+    ? (intake?.domestic_delivery_method || '')
+    : (intake?.international_delivery_method || '');
 
   // Build content placeholders
   const contentPlaceholders = [];
