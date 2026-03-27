@@ -13,14 +13,13 @@ from __future__ import annotations
 
 import csv
 import random
-from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import openpyxl
 from openpyxl.formatting.rule import CellIsRule, FormulaRule
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side, numbers
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.worksheet import Worksheet
@@ -308,9 +307,6 @@ def _parse_amount(val: str) -> float:
 # ---------------------------------------------------------------------------
 
 # Programs CSV still has hours/weeks — pull them for intake generation
-PROGRAM_HOURS: dict[str, dict[str, Any]] = {}
-
-
 def generate_intakes(programs_raw: list[dict[str, str]]) -> list[dict[str, Any]]:
     random.seed(42)
     intakes: list[dict[str, Any]] = []
@@ -321,7 +317,6 @@ def generate_intakes(programs_raw: list[dict[str, str]]) -> list[dict[str, Any]]
         # Parse hours/weeks from old CSV for seeding
         hours = _safe_int(prog.get("hours", ""))
         weeks = _safe_int(prog.get("weeks_full_time", ""))
-        PROGRAM_HOURS[name] = {"hours": hours, "weeks": weeks}
 
         old_delivery = prog.get("delivery_method", "In-Class")
         dom_delivery = "In-Class"
